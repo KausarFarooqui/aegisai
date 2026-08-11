@@ -137,3 +137,70 @@ Both are the kind of bug that would surface for the first time live in
 front of a judge if only tested by inspection — this is why the schema was
 validated against a real instance before handing it off, not just imported
 and eyeballed.
+
+---
+
+## Phase 4 — AI Intelligence Layer
+
+### The LLM/deterministic-code boundary, made concrete
+
+`app/schemas/extraction.py` is the actual contract: the LLM may propose
+five 0–100 factor estimates with a one-line reason each
+(`ProposedAIOpportunity.factor_*`), and may *hint* whether a role/skill is
+new (`ProposedRole.is_new` / `ProposedSkill.is_new`). It may NOT propose a
+final score, a final skill trend, or a final match/no-match decision on
+duplicate entities — those three things are computed by
+`app/scoring/impact_score.py`, `app/scoring/skill_trend.py`, and
+`app/services/dedup_service.py` respectively, all pure functions with no
+LLM call inside them, all covered by unit tests that never touch a network.
+This is the literal, checkable answer to "how do you prevent the AI from
+just making up a score" — not a design intention, a schema boundary the
+code enforces.
+
+### Why entity dedup is a separate, decoupled module from embedding generation
+
+`app/services/dedup_service.py` operates on plain `list[float]` vectors and
+knows nothing about sentence-transformers. `app/intelligence/embeddings.py`
+is the only thing that knows how a vector gets produced. This split exists
+for a very concrete reason: it let the *matching algorithm* (cosine
+similarity + thresholding — the part that actually decides "reuse this
+role" vs. "create a new one") get full unit-test coverage with synthetic
+vectors, independent of whether the real embedding model could run in this
+particular environment (see below).
+
+### Honest account of what could and couldn't be verified live here
+
+Everything in Phase 3 was verified against a real database. Phase 4 has
+one genuine gap, disclosed rather than glossed over:
+
+- **Scoring, skill-trend classification, dedup matching, the extraction
+  schema, and the LLM orchestrator's fallback/retry control flow**: all
+  fully unit tested (36 tests) with no network dependency, using synthetic
+  vectors and fake LLM providers that exercise the same code paths the
+  real ones do.
+- **The actual sentence-transformers model** (`EmbeddingProvider._get_model`)
+  and **the actual Groq/Ollama HTTP calls** (`GroqProvider._raw_complete`,
+  `OllamaProvider._raw_complete`): NOT exercised live in this environment.
+  Installing `sentence-transformers` pulls in `torch`, and the default
+  PyPI `torch` wheel bundles several GB of CUDA runtime dependencies; the
+  trimmed CPU-only wheel lives on `download.pytorch.org`, which isn't on
+  this sandbox's network allowlist. Two install attempts filled the disk
+  before completing. Testing Groq directly needs a real API key, which
+  isn't something to paste into a chat session.
+
+  Two scripts exist specifically to close this gap on your machine, and
+  should be run before trusting either mechanism:
+  `backend/scripts/verify_embeddings.py` (checks the real model produces
+  sensible similarity scores — near-duplicate role names should score
+  meaningfully higher than unrelated ones) and
+  `backend/scripts/test_llm_connection.py` (confirms Groq responds and
+  validates against the schema, and separately checks Ollama if it's
+  running locally). Both fail loudly with a clear message if something's
+  wrong — neither silently reports success.
+
+This is a real constraint of the build environment, not a shortcut taken
+on the design — worth being upfront about if asked "did you test
+everything yourself" in the interview: yes, everything that could be
+tested without a paid credential or a GPU-scale dependency was tested
+for real; the two pieces that needed either are wired for one-command
+verification on your own machine instead of being asserted untested.

@@ -46,14 +46,13 @@ def test_full_hierarchy_round_trip(db):
 
 def test_ai_assessment_scoring_matches_weighted_formula(db):
     """
-    The AI Impact Score formula is:
-      0.30*repetitiveness + 0.20*data_availability + 0.20*predictability
-      + 0.15*digitalization + 0.15*ai_capability_fit
-
-    AIAssessment.total_score must always be computed by deterministic code
-    (see app/scoring, added in Phase 4) — this test locks the expected
-    output for a known input so a future change to the formula fails loudly.
+    AIAssessment.total_score and impact_band must always be produced by
+    app.scoring.compute_impact_score — never hand-set. This test persists
+    a real assessment using that function's output, then confirms the DB
+    round-trips it unchanged.
     """
+    from app.scoring.impact_score import ImpactFactors, compute_impact_score
+
     industry = Industry(name="Test Industry for Scoring")
     vc = ValueChain(name="Test Value Chain", industry=industry)
     process = Process(name="Test Process", value_chain=vc, source="dynamic")
@@ -67,31 +66,24 @@ def test_ai_assessment_scoring_matches_weighted_formula(db):
     )
     activity.ai_opportunities.append(opportunity)
 
-    factors = {
-        "repetitiveness": 90.0,
-        "data_availability": 85.0,
-        "predictability": 80.0,
-        "digitalization": 75.0,
-        "ai_capability_fit": 88.0,
-    }
-    expected_total = (
-        0.30 * factors["repetitiveness"]
-        + 0.20 * factors["data_availability"]
-        + 0.20 * factors["predictability"]
-        + 0.15 * factors["digitalization"]
-        + 0.15 * factors["ai_capability_fit"]
+    factors = ImpactFactors(
+        repetitiveness=90.0, data_availability=85.0, predictability=80.0,
+        digitalization=75.0, ai_capability_fit=88.0,
     )
+    scored = compute_impact_score(factors)
+    assert scored.total_score == 84.45
+    assert scored.impact_band == ImpactBand.VERY_HIGH  # not HIGH — 84.45 >= 81
 
     assessment = AIAssessment(
         ai_opportunity=opportunity,
-        factor_repetitiveness=factors["repetitiveness"],
-        factor_data_availability=factors["data_availability"],
-        factor_predictability=factors["predictability"],
-        factor_digitalization=factors["digitalization"],
-        factor_ai_capability_fit=factors["ai_capability_fit"],
+        factor_repetitiveness=factors.repetitiveness,
+        factor_data_availability=factors.data_availability,
+        factor_predictability=factors.predictability,
+        factor_digitalization=factors.digitalization,
+        factor_ai_capability_fit=factors.ai_capability_fit,
         factor_rationale={},
-        total_score=expected_total,
-        impact_band=ImpactBand.HIGH,
+        total_score=scored.total_score,
+        impact_band=scored.impact_band,
     )
 
     db.add_all([industry, vc, process, activity, opportunity, assessment])
@@ -99,8 +91,8 @@ def test_ai_assessment_scoring_matches_weighted_formula(db):
     db.expire_all()
 
     fetched = db.query(AIOpportunity).filter_by(name="Test Opportunity").one()
-    assert round(fetched.assessment.total_score, 2) == round(expected_total, 2)
-    assert fetched.assessment.impact_band == ImpactBand.HIGH
+    assert fetched.assessment.total_score == 84.45
+    assert fetched.assessment.impact_band == ImpactBand.VERY_HIGH
 
 
 def test_enum_columns_store_lowercase_values(db):
