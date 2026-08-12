@@ -140,105 +140,6 @@ and eyeballed.
 
 ---
 
-## Phase 5 — orchestration and the API layer
-
-### Why Role/Skill/Activity needed embedding columns (a gap caught before it mattered)
-
-The Phase 4 dedup design assumed candidate entities' embeddings would be
-available for comparison, but Phase 3's schema never actually stored one —
-only `ResearchSource.embedding` existed. Pulling every existing role into
-Python to embed and compare on every analysis run would work at seed-data
-scale and quietly stop scaling well before "what happens at 1,000
-processes." Fixed by adding `embedding` columns to `Role`, `Skill`, and
-`Activity`, and using pgvector's `.cosine_distance()` directly in SQL
-(`ORDER BY embedding <=> :query LIMIT 5`) so the database does the coarse
-nearest-neighbor search and only the top handful of candidates go through
-the already-tested Python matching logic. Deliberately did NOT add
-dedup search for `Activity` — activities belong to exactly one process and
-aren't meant to be deduped across processes (see `entity_repository.py`'s
-docstring for the reasoning); the embedding column exists for potential
-future cross-process analytics, not for the dedup pipeline.
-
-### Why the extraction schema needed cross-reference fields (a real design gap, fixed before the pipeline was built on top of it)
-
-The original Phase 4 schema had `activities`, `roles`, `skills`, and
-`ai_opportunities` as flat, unconnected lists — nothing told the pipeline
-*which* role performs *which* activity, or *which* skills a role needs.
-Building the pipeline on that schema as-is would have meant either linking
-every role to every activity indiscriminately (a structurally meaningless
-graph) or guessing. Fixed by adding `performed_by_role_titles` (on
-Activity), `requires_skill_names` (on Role), and `affected_activity_names`
-(on AIOpportunity) as name-based cross-references, plus a Pydantic
-model-level validator that rejects any reference that doesn't resolve to a
-real name elsewhere in the same response — an LLM hallucinating a role
-name that doesn't exist anywhere else in its own output now fails loudly
-in validation instead of silently producing a broken graph edge.
-
-### Why AIOpportunity's affected roles/skills are derived, not LLM-specified
-
-The LLM specifies which *activities* an opportunity affects
-(`affected_activity_names`) but not which roles/skills — those are
-computed transitively (activity → its roles → their skills) by the
-pipeline. This was a deliberate simplification: an AI opportunity
-affecting an activity naturally affects whoever performs it and whatever
-skills they bring to it, so asking the LLM to separately (and redundantly)
-restate role/skill impacts would just be another place for its answer to
-drift out of sync with the activity-level answer it already gave.
-
-### Why persistence is one atomic commit, not many small ones
-
-`AnalysisJob` status/stage updates commit immediately at each step (a
-judge watching the UI needs to see `pending → processing → completed` in
-real time). The actual entity graph — Process, Activities, Roles, Skills,
-AIOpportunities, AIAssessments, GraphEdges — is built entirely in memory
-across the LLM/dedup/scoring stages and committed exactly once, at the very
-end, together with marking the job completed. If anything fails during
-persistence, the whole transaction rolls back and the job is marked failed
-in a fresh, separate transaction — there is no code path that leaves a
-half-created Process with some but not all of its activities/roles
-attached. Verified directly:
-`test_malformed_llm_output_fails_the_job_without_partial_writes`.
-
-### Why a failed pipeline run returns HTTP 200, not 500
-
-`POST /api/processes/analyze` returns 200 with `status: "failed"` and a
-real `error_message` when validation or the LLM fails — not a 500. A 500
-means the server itself broke; a cleanly-rejected duplicate process name or
-a malformed LLM response the pipeline caught and reported is the system
-working as designed. This is what lets the frontend (and a judge watching
-the demo) see "here's why this was rejected" instead of a generic server
-error page.
-
-### Two more real bugs caught by testing against the actual running server, not just the test suite
-
-**1. A sandbox package-version drift that would have produced a misleading
-result.** An earlier ad-hoc `pip install groq` in Phase 4 had pulled in
-`fastapi 0.141.1` as a side effect, silently diverging from the
-`fastapi==0.115.0` pinned in `requirements.txt`. On 0.141.1,
-`app.include_router()`'s internal representation changed enough that a
-naive route-listing check found zero API routes — which would have looked
-like a real bug in this codebase, when it was actually a mismatch between
-what was being tested and what `requirements.txt` (and therefore your
-environment) actually installs. Caught by checking the installed version
-against the pin rather than assuming they matched; fixed by reinstalling
-the exact pinned versions before continuing.
-
-**2. `Base.metadata.drop_all()` (used by `tests/conftest.py` to clean up
-after a full test run) does not touch the `alembic_version` table, because
-Alembic manages that table outside of `Base.metadata` entirely.** Running
-the test suite, then trying to boot the live server against the same
-database, produced `relation "processes" does not exist` — even though
-`alembic upgrade head` reported nothing to do, because `alembic_version`
-still showed the migrations as applied. This is a genuine, easy-to-hit trap:
-"tests cleaned up, so the schema must still be at head" is false whenever
-a test suite drops tables directly instead of through Alembic. Documented
-here, and worth remembering as a real operational note: after running
-`pytest`, the schema needs `alembic upgrade head` again before the live
-server will work — this order-of-operations issue is exactly the kind of
-thing to mention if asked "what surprised you" in the interview.
-
----
-
 ## Phase 4 — AI Intelligence Layer
 
 ### The LLM/deterministic-code boundary, made concrete
@@ -340,3 +241,130 @@ left holding 5432 — diagnosed by comparing `pg_lsclusters` output against
 the actual connection error rather than assuming the default port was
 correct. Both are exactly the kind of environment-specific issues that
 would otherwise surface for the first time live in front of a judge.
+
+---
+
+## Phase 5 — orchestration and the API layer
+
+The Phase 4 dedup design assumed candidate entities' embeddings would be
+available for comparison, but Phase 3's schema never actually stored one —
+only `ResearchSource.embedding` existed. Pulling every existing role into
+Python to embed and compare on every analysis run would work at seed-data
+scale and quietly stop scaling well before "what happens at 1,000
+processes." Fixed by adding `embedding` columns to `Role`, `Skill`, and
+`Activity`, and using pgvector's `.cosine_distance()` directly in SQL
+(`ORDER BY embedding <=> :query LIMIT 5`) so the database does the coarse
+nearest-neighbor search and only the top handful of candidates go through
+the already-tested Python matching logic. Deliberately did NOT add
+dedup search for `Activity` — activities belong to exactly one process and
+aren't meant to be deduped across processes (see `entity_repository.py`'s
+docstring for the reasoning); the embedding column exists for potential
+future cross-process analytics, not for the dedup pipeline.
+
+### Why the extraction schema needed cross-reference fields (a real design gap, fixed before the pipeline was built on top of it)
+
+The original Phase 4 schema had `activities`, `roles`, `skills`, and
+`ai_opportunities` as flat, unconnected lists — nothing told the pipeline
+*which* role performs *which* activity, or *which* skills a role needs.
+Building the pipeline on that schema as-is would have meant either linking
+every role to every activity indiscriminately (a structurally meaningless
+graph) or guessing. Fixed by adding `performed_by_role_titles` (on
+Activity), `requires_skill_names` (on Role), and `affected_activity_names`
+(on AIOpportunity) as name-based cross-references, plus a Pydantic
+model-level validator that rejects any reference that doesn't resolve to a
+real name elsewhere in the same response — an LLM hallucinating a role
+name that doesn't exist anywhere else in its own output now fails loudly
+in validation instead of silently producing a broken graph edge.
+
+### Why AIOpportunity's affected roles/skills are derived, not LLM-specified
+
+The LLM specifies which *activities* an opportunity affects
+(`affected_activity_names`) but not which roles/skills — those are
+computed transitively (activity → its roles → their skills) by the
+pipeline. This was a deliberate simplification: an AI opportunity
+affecting an activity naturally affects whoever performs it and whatever
+skills they bring to it, so asking the LLM to separately (and redundantly)
+restate role/skill impacts would just be another place for its answer to
+drift out of sync with the activity-level answer it already gave.
+
+### Why persistence is one atomic commit, not many small ones
+
+`AnalysisJob` status/stage updates commit immediately at each step (a
+judge watching the UI needs to see `pending → processing → completed` in
+real time). The actual entity graph — Process, Activities, Roles, Skills,
+AIOpportunities, AIAssessments, GraphEdges — is built entirely in memory
+across the LLM/dedup/scoring stages and committed exactly once, at the very
+end, together with marking the job completed. If anything fails during
+persistence, the whole transaction rolls back and the job is marked failed
+in a fresh, separate transaction — there is no code path that leaves a
+half-created Process with some but not all of its activities/roles
+attached. Verified directly:
+`test_malformed_llm_output_fails_the_job_without_partial_writes`.
+
+### Why a failed pipeline run returns HTTP 200, not 500
+
+`POST /api/processes/analyze` returns 200 with `status: "failed"` and a
+real `error_message` when validation or the LLM fails — not a 500. A 500
+means the server itself broke; a cleanly-rejected duplicate process name or
+a malformed LLM response the pipeline caught and reported is the system
+working as designed. This is what lets the frontend (and a judge watching
+the demo) see "here's why this was rejected" instead of a generic server
+error page.
+
+### Two more real bugs caught by testing against the actual running server, not just the test suite
+
+**1. A sandbox package-version drift that would have produced a misleading
+result.** An earlier ad-hoc `pip install groq` in Phase 4 had pulled in
+`fastapi 0.141.1` as a side effect, silently diverging from the
+`fastapi==0.115.0` pinned in `requirements.txt`. On 0.141.1,
+`app.include_router()`'s internal representation changed enough that a
+naive route-listing check found zero API routes — which would have looked
+like a real bug in this codebase, when it was actually a mismatch between
+what was being tested and what `requirements.txt` (and therefore your
+environment) actually installs. Caught by checking the installed version
+against the pin rather than assuming they matched; fixed by reinstalling
+the exact pinned versions before continuing.
+
+**2. `Base.metadata.drop_all()` (used by `tests/conftest.py` to clean up
+after a full test run) does not touch the `alembic_version` table, because
+Alembic manages that table outside of `Base.metadata` entirely.** Running
+the test suite, then trying to boot the live server against the same
+database, produced `relation "processes" does not exist` — even though
+`alembic upgrade head` reported nothing to do, because `alembic_version`
+still showed the migrations as applied. This is a genuine, easy-to-hit trap:
+"tests cleaned up, so the schema must still be at head" is false whenever
+a test suite drops tables directly instead of through Alembic. Documented
+here, and worth remembering as a real operational note: after running
+`pytest`, the schema needs `alembic upgrade head` again before the live
+server will work — this order-of-operations issue is exactly the kind of
+thing to mention if asked "what surprised you" in the interview.
+
+---
+
+## Post-Phase-5 — a real bug found during your own local testing
+
+**Alembic's `Config` object (backed by Python's `configparser`) chokes on
+any literal `%` stored via `config.set_main_option()` — independent of
+whether the URL is correctly percent-encoded.** `migrations/env.py`
+originally injected the database URL with
+`config.set_main_option("sqlalchemy.url", settings.database_url)`, then
+read it back via `config.get_main_option(...)` / `engine_from_config(...)`.
+`configparser` applies `%`-interpolation to every stored value, so a URL
+containing a literal `%` — which URL-encoded passwords almost always
+contain (`%40` for `@`, `%25` for a literal `%`, etc.) — raises
+`ValueError: invalid interpolation syntax` the instant it's stored,
+regardless of whether the percent-encoding is otherwise correct. This
+didn't surface during the Phase 3/4 verification because those runs used a
+password without a `%` character in it; it surfaced only once a real
+password containing one was used against the local Alembic CLI (as
+opposed to plain SQLAlchemy, via `uvicorn`, which never hit this code
+path). Fixed by never routing the URL through the configparser-backed
+`Config` object at all — `DATABASE_URL` is now a plain Python variable
+passed directly to `create_engine()` (online mode) and
+`context.configure(url=...)` (offline mode). Reproduced locally with a
+throwaway Postgres user whose password was deliberately set to contain a
+literal `%`, and confirmed both `alembic current` and a full `alembic
+upgrade head` succeed against it before considering this fixed — this bug
+was found on a real machine, outside the sandbox this project was
+developed in, which is exactly the kind of gap that no amount of
+self-testing catches on its own.

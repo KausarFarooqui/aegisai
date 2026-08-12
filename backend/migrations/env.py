@@ -2,12 +2,24 @@
 Alembic environment — wired to app.models (so autogenerate sees every
 table) and to app.config.settings (so the connection string always comes
 from .env / DATABASE_URL, never from a hard-coded value in this repo).
+
+IMPORTANT: the database URL is passed DIRECTLY to create_engine() /
+context.configure() below — it is deliberately never stored via
+config.set_main_option("sqlalchemy.url", ...) or read back via
+config.get_main_option(...). Alembic's Config object is backed by Python's
+configparser, which applies %-interpolation to every value — so a URL
+containing a literal '%' (extremely common: URL-encoded passwords almost
+always contain one, e.g. '%40' for '@' or '%25' for a literal '%') raises
+`ValueError: invalid interpolation syntax` the moment it's stored there,
+regardless of whether the URL itself is correctly percent-encoded. This
+was caught by testing against a real password containing '%' — see
+docs/architecture/decision-log.md for the full account.
 """
 import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool
 
 from alembic import context
 
@@ -22,17 +34,16 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Inject the real DB URL from Settings/.env instead of alembic.ini.
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
+DATABASE_URL = settings.database_url  # kept as a plain Python variable — never
+# passed through config.set_main_option(); see module docstring above.
 
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=DATABASE_URL,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -43,11 +54,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = create_engine(DATABASE_URL, poolclass=pool.NullPool)
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
