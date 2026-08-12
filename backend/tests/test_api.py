@@ -142,7 +142,7 @@ def test_get_analysis_job_by_id(client, value_chain):
     job_resp = client.get(f"/api/analysis/{job_id}")
     assert job_resp.status_code == 200
     assert job_resp.json()["status"] == "completed"
-    assert len(job_resp.json()["stage_log"]) == 6
+    assert len(job_resp.json()["stage_log"]) == 7
 
 
 def test_graph_endpoint_returns_connected_nodes_and_edges(client, value_chain):

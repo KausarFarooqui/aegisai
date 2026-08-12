@@ -39,6 +39,7 @@ def analyze_process(
         llm_provider=llm,
         embedding_provider=embeddings,
         entity_similarity_threshold=settings.entity_similarity_threshold,
+        evidence_relevance_threshold=settings.evidence_relevance_threshold,
     )
     job = pipeline.run(
         process_name=request.process_name,

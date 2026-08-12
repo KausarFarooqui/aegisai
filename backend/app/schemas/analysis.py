@@ -11,7 +11,7 @@ class AnalyzeProcessRequest(BaseModel):
 
 
 class AnalysisJobOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     id: uuid.UUID
     target_type: str

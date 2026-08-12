@@ -14,7 +14,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Activity, AIOpportunity, Process, Role, Skill, ValueChain
+from app.models import Activity, AIOpportunity, Process, ResearchSource, Role, Skill, ValueChain
 from app.repositories.base import BaseRepository
 
 
@@ -113,3 +113,21 @@ class ValueChainRepository(BaseRepository[ValueChain]):
 class AIOpportunityRepository(BaseRepository[AIOpportunity]):
     def __init__(self, db: Session):
         super().__init__(db, AIOpportunity)
+
+
+class ResearchSourceRepository(BaseRepository[ResearchSource]):
+    def __init__(self, db: Session):
+        super().__init__(db, ResearchSource)
+
+    def find_similar(self, query_embedding: list[float], limit: int = 3) -> list[ResearchSource]:
+        """Same pgvector-indexed pattern as RoleRepository/SkillRepository —
+        see their docstrings for why this is a SQL query, not a Python loop."""
+        if self.count() == 0:
+            return []
+        stmt = (
+            select(ResearchSource)
+            .where(ResearchSource.embedding.is_not(None))
+            .order_by(ResearchSource.embedding.cosine_distance(query_embedding))
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())

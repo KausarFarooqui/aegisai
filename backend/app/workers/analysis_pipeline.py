@@ -5,7 +5,7 @@ Test flow:
   Input -> Backend validation -> AI analysis -> Activity extraction ->
   Role identification -> Skill identification -> AI opportunity
   identification -> Impact scoring -> Relationship creation ->
-  Database persistence -> Graph update
+  Database persistence -> Evidence retrieval -> Graph update
 
 Every stage is logged to the AnalysisJob (app/models/analysis_job.py) as it
 happens, so a judge watching the UI sees real progress, and any failure is
@@ -53,6 +53,7 @@ from app.scoring.config import SCORING_MODEL_VERSION
 from app.scoring.impact_score import ImpactFactors, compute_impact_score
 from app.scoring.skill_trend import classify_skill_trend
 from app.services.dedup_service import EntityCandidate, find_best_match
+from app.services.evidence_service import EvidenceService
 from app.services.graph_sync_service import GraphSyncService
 
 
@@ -67,6 +68,7 @@ class ProcessAnalysisPipeline:
         llm_provider: LLMProvider,
         embedding_provider: EmbeddingProvider,
         entity_similarity_threshold: float,
+        evidence_relevance_threshold: float = 0.72,
     ):
         self.db = db
         self.llm = llm_provider
@@ -78,6 +80,8 @@ class ProcessAnalysisPipeline:
         self.roles = RoleRepository(db)
         self.skills = SkillRepository(db)
         self.graph = GraphSyncService(db)
+        self.evidence = EvidenceService(db, embedding_provider, evidence_relevance_threshold)
+        self.source = "dynamic"  # overwritten at the start of run(); default here is defensive
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -88,7 +92,20 @@ class ProcessAnalysisPipeline:
         process_name: str,
         value_chain_id: uuid.UUID,
         process_context: str | None = None,
+        source: str = "dynamic",
     ) -> AnalysisJob:
+        """
+        `source` distinguishes how this analysis run was triggered:
+        "dynamic" (default) for a live Analyze New Element / Surprise
+        Record Test request, "seed" for the initial dataset load
+        (scripts/seed_processes.py). Both paths run through this exact
+        same method — the only difference is the provenance label written
+        onto the created Process/Activity/Role/Skill/AIOpportunity rows,
+        never the mechanism that produces their content. See
+        docs/architecture/decision-log.md for why this distinction exists
+        without implying the seed data was generated any differently.
+        """
+        self.source = source
         job = self._create_job(process_name, process_context)
 
         try:
@@ -115,6 +132,9 @@ class ProcessAnalysisPipeline:
                 process_name, value_chain_id, extraction, resolved_roles, resolved_skills, assessments
             )
             self.db.flush()  # assign IDs without committing yet
+
+            self._set_stage(job, "evidence_retrieval")
+            self._attach_evidence(process)
 
             self._set_stage(job, "skill_trend_update")
             self._update_skill_trends(list(resolved_skills.values()))
@@ -188,7 +208,7 @@ class ProcessAnalysisPipeline:
         if match.matched:
             existing = self.roles.get_by_id(uuid.UUID(match.candidate.entity_id))
             return existing, False
-        new_role = Role(title=title, embedding=embedding, source="dynamic")
+        new_role = Role(title=title, embedding=embedding, source=self.source)
         self.roles.add(new_role)
         return new_role, True
 
@@ -203,7 +223,7 @@ class ProcessAnalysisPipeline:
         if match.matched:
             existing = self.skills.get_by_id(uuid.UUID(match.candidate.entity_id))
             return existing, False
-        new_skill = Skill(name=name, embedding=embedding, source="dynamic")
+        new_skill = Skill(name=name, embedding=embedding, source=self.source)
         self.skills.add(new_skill)
         return new_skill, True
 
@@ -280,7 +300,7 @@ class ProcessAnalysisPipeline:
             business_purpose=extraction.business_purpose,
             current_challenges=extraction.current_challenges,
             value_chain=value_chain,
-            source="dynamic",
+            source=self.source,
         )
 
         # Wire Role -> Skill edges (every role's requires_skill_names)
@@ -299,7 +319,7 @@ class ProcessAnalysisPipeline:
                 description=proposed_activity.description,
                 process=process,
                 embedding=self.embeddings.encode(proposed_activity.name),
-                source="dynamic",
+                source=self.source,
             )
             for role_title in proposed_activity.performed_by_role_titles:
                 role, _ = resolved_roles[role_title.strip().lower()]
@@ -315,7 +335,7 @@ class ProcessAnalysisPipeline:
                 human_ai_responsibility=self._parse_human_ai_responsibility(proposed_opp.human_ai_responsibility),
                 business_benefit=proposed_opp.business_benefit,
                 risks=proposed_opp.risks,
-                source="dynamic",
+                source=self.source,
             )
             opportunity.assessment = assessment
 
@@ -342,7 +362,28 @@ class ProcessAnalysisPipeline:
         return process
 
     # ------------------------------------------------------------------
-    # Stage 6: skill trend recomputation (deterministic, never LLM-decided)
+    # Stage 6: evidence retrieval (best-effort — never fails the job)
+    # ------------------------------------------------------------------
+
+    def _attach_evidence(self, process: Process) -> None:
+        """
+        For each AI opportunity just created, attempt to find a supporting
+        research source via semantic search (EvidenceService). Best-effort
+        by design: an empty ResearchSource table (e.g. before
+        scripts/seed_research_sources.py has been run) or no sufficiently
+        relevant source for a given opportunity is a normal outcome, not a
+        failure — the opportunity simply gets no Evidence record, which the
+        UI shows as "no supporting research found" rather than a fabricated
+        citation.
+        """
+        for activity in process.activities:
+            for opportunity in activity.ai_opportunities:
+                evidence = self.evidence.find_evidence_for_opportunity(opportunity)
+                if evidence is not None:
+                    self.db.add(evidence)
+
+    # ------------------------------------------------------------------
+    # Stage 7: skill trend recomputation (deterministic, never LLM-decided)
     # ------------------------------------------------------------------
 
     def _update_skill_trends(self, resolved_skills: list[tuple[Skill, bool]]) -> None:
@@ -354,7 +395,7 @@ class ProcessAnalysisPipeline:
             skill.trend_rationale = rationale
 
     # ------------------------------------------------------------------
-    # Stage 7: graph sync
+    # Stage 8: graph sync
     # ------------------------------------------------------------------
 
     def _sync_graph(self, process: Process) -> None:

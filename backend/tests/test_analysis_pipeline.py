@@ -177,7 +177,7 @@ def test_full_pipeline_creates_complete_connected_graph(db, value_chain):
     stages = [s["stage"] for s in job.stage_log]
     assert stages == [
         "llm_extraction", "dedup_matching", "scoring", "persistence",
-        "skill_trend_update", "graph_sync",
+        "evidence_retrieval", "skill_trend_update", "graph_sync",
     ]
 
     from app.models import Process

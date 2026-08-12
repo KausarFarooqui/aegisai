@@ -2,17 +2,17 @@
 
 **MODUS Enterprise AI Build Challenge — Assignment 11: Process × Role × Skill Intelligence Graph**
 
-> Status: **Phase 5 of 12 complete — the Surprise Record Test actually
-> works, end to end, through the real HTTP API.** `POST /api/processes/
-> analyze` runs the full pipeline (validate → LLM extraction → embedding
-> dedup → deterministic scoring → transactional persistence → skill-trend
-> recompute → graph sync) and is provably correct — 68 tests passing,
-> including full pipeline runs against a real Postgres database and a
-> proof that re-analyzing with overlapping role/skill names reuses
-> existing entities instead of duplicating them. What's *not* yet
-> live-verified is the real Groq call and real embedding model inside
-> this exact endpoint (same disclosed gap as Phase 4 — see below).
-> Frontend is not yet built (Phase 6).
+> Status: **Phase 6 of 12 complete — the database is populated with a
+> real, connected intelligence graph, not just proven capable of holding
+> one.** `scripts/seed_processes.py` seeds 10 processes across two value
+> chains (Retail Lending; Trade Finance & Compliance) using the **exact
+> same pipeline** `POST /api/processes/analyze` uses — proof that seed
+> data and live dynamic-analysis data are produced by one mechanism, not
+> two. `scripts/seed_research_sources.py` loads a 20-source curated
+> evidence corpus (real, independently verified URLs — see decision log)
+> that the pipeline now automatically searches and cites against every AI
+> opportunity it creates. 82 tests passing. Frontend is not yet built
+> (Phase 7).
 
 ## What this is
 
@@ -122,19 +122,37 @@ and a stale local Postgres port) are in `docs/architecture/decision-log.md`.
   `alembic upgrade head`" silently does nothing). Full account in the
   decision log.
 
-**Try the real Surprise Record Test yourself** (after `alembic upgrade
-head` against your database):
+**Confirmed live, for real** — not a hypothetical "try it yourself," this
+actually happened, against the real Supabase project and a real Groq key:
+
+```
+POST /api/processes/analyze {"process_name": "Warehouse Inventory Forecasting", ...}
+→ status: completed, 6 stages, ~22s (Groq retried once mid-run on a
+  schema validation error — 13 proposed skills vs. the 12-item cap — and
+  self-corrected on retry, unprompted)
+
+POST /api/processes/analyze {"process_name": "Inventory Demand Planning", ...}
+→ status: completed, a fully independent second Groq call
+```
+
+The second call proposed "Inventory Analyst" and "Data Analysis" again,
+with no memory of the first call — and the dedup mechanism reused the
+**exact same UUIDs** the first process created, rather than duplicating
+them. That's the core mechanism this entire architecture rests on, proven
+with two independent live LLM calls, not a scripted test. Full walkthrough
+in the decision log.
+
+To reproduce (after `alembic upgrade head` against your database):
 
 ```bash
-python scripts/bootstrap_minimal_data.py   # creates one Industry/Org/ValueChain
+python scripts/bootstrap_minimal_data.py   # or scripts/seed_processes.py for the full dataset
 uvicorn app.main:app --reload --port 8000
 
-# in another terminal, using the value_chain_id the bootstrap script printed:
+# in another terminal, using the value_chain_id printed above:
 curl -X POST http://localhost:8000/api/processes/analyze \
   -H "Content-Type: application/json" \
   -d '{"process_name": "Warehouse Inventory Forecasting", "value_chain_id": "<paste-here>"}'
 
-# then fetch the result:
 curl http://localhost:8000/api/processes/<result_entity_id from above>
 curl http://localhost:8000/api/graph/process/<same id>
 ```
@@ -142,6 +160,45 @@ curl http://localhost:8000/api/graph/process/<same id>
 This is the actual MODUS example input ("Warehouse Inventory Forecasting")
 — nothing in the codebase is hard-coded for it specifically; any process
 name works the same way.
+
+**Phase 6 additions — 6 more tests, 82 total, all passing:**
+
+- `data/seed/research_sources.py` — 20 curated, real research sources
+  (industry reports, academic papers, and current regulatory guidance on
+  AI in banking/lending/AML/trade finance — see decision log for how each
+  was independently verified, not just generated). Diversity across all 6
+  source types the schema supports.
+- `scripts/seed_research_sources.py` — embeds and loads the corpus,
+  idempotent by URL.
+- `app/services/evidence_service.py` — semantic search linking an
+  AIOpportunity to supporting research, reusing the same
+  `find_best_match` logic that powers entity dedup (same underlying
+  operation — "find the closest match above a threshold, or admit
+  nothing qualifies" — so there's one tested implementation, not two).
+  Wired into the pipeline as its own stage (`evidence_retrieval`, between
+  persistence and skill-trend update) — best-effort by design: an empty
+  corpus or nothing relevant enough is a normal outcome, never a fabricated
+  citation.
+- `scripts/seed_processes.py` — seeds the actual 10-process dataset (5
+  Retail Lending processes, 5 Trade Finance & Compliance processes) by
+  calling `ProcessAnalysisPipeline.run()` — the *exact same pipeline*
+  `POST /api/processes/analyze` uses, with `source="seed"` as the only
+  difference. Idempotent (skips already-existing process names) and
+  resilient (one process failing doesn't stop the rest of the run).
+- Tests cover: idempotent org-structure setup, the full 10-process seed
+  run (with dedup correctly collapsing repeated role/skill names into
+  shared entities — proven at seed-script scale, not just two processes),
+  safe re-running, and provenance tagging (`source="seed"` vs `"dynamic"`,
+  including the subtlety that a seed run reusing a dynamically-created
+  entity must not overwrite that entity's original provenance).
+
+**Not yet live-verified**: the real evidence-retrieval quality (does a
+real embedding of a real AI opportunity actually find genuinely relevant
+research from the corpus, at a sensible threshold) and the real 10-process
+seed run's output quality — both need your real Groq key + embedding
+model, same disclosed pattern as every AI-dependent piece so far. Run
+`scripts/seed_research_sources.py` then `scripts/seed_processes.py` on
+your machine to confirm.
 
 ## Setup (verified path — WSL2/Ubuntu)
 
@@ -201,17 +258,18 @@ aegisai/
 │   │   ├── config/settings.py # all env-driven config, one place
 │   │   ├── models/            # SQLAlchemy models — the domain graph (Phase 3)
 │   │   ├── db/session.py      # engine + session factory
-│   │   ├── schemas/           # Pydantic schemas — extraction (P4), process/dashboard/analysis/graph (P5)
-│   │   ├── services/          # dedup (P4); graph_sync, dashboard, graph_query (P5)
-│   │   ├── repositories/      # base, entity (pgvector search), graph — all done (Phase 5)
+│   │   ├── schemas/           # extraction (P4); process/dashboard/analysis/graph (P5)
+│   │   ├── services/          # dedup (P4); graph_sync/dashboard/graph_query (P5); evidence_service (P6)
+│   │   ├── repositories/      # base, entity (pgvector search incl. ResearchSource), graph (P5)
 │   │   ├── intelligence/      # llm_provider.py, embeddings.py (P4); prompts.py (P5)
 │   │   ├── scoring/           # impact_score.py + skill_trend.py (Phase 4)
 │   │   ├── api/routes/        # dashboard, processes, roles_skills, graph, analyze (Phase 5)
-│   │   └── workers/           # analysis_pipeline.py — the actual Surprise Record Test (Phase 5)
+│   │   └── workers/           # analysis_pipeline.py — the actual Surprise Record Test (P5, evidence stage added P6)
 │   ├── migrations/            # Alembic — 2 verified migrations (schema, then embedding columns)
-│   ├── scripts/                # verify_embeddings.py, test_llm_connection.py, bootstrap_minimal_data.py
-│   └── tests/                 # pytest, 68 passing
-├── data/seed/                 # full seed data script + curated evidence corpus (Phase 6)
+│   ├── scripts/                # verify_embeddings.py, test_llm_connection.py, bootstrap_minimal_data.py,
+│   │                            # seed_research_sources.py, seed_processes.py (Phase 6)
+│   └── tests/                 # pytest, 82 passing
+├── data/seed/                 # research_sources.py — 20 real, independently-verified sources (Phase 6)
 ├── docs/
 │   └── architecture/decision-log.md   # every architectural decision + why
 ├── frontend/                  # React app (Phase 7)
@@ -224,16 +282,14 @@ aegisai/
 |---|---|
 | Real backend, persistent DB | ✅ Built and verified live |
 | Structured, normalized data model | ✅ 19 tables, typed FKs, verified |
-| Traceability fields (Evidence, source provenance) | ✅ Modeled; `source` populated on every entity; Evidence/ResearchSource population is Phase 6 |
+| Traceability fields (Evidence, source provenance) | ✅ `source` populated on every entity; Evidence/ResearchSource populated with 20 real sources and semantic search wired into the live pipeline (Phase 6) |
 | AI/model integration, model abstraction | ✅ Provider abstraction + fallback built, unit tested, **and live-verified** against real Groq/embeddings (see decision log) |
 | Deterministic scoring, separated from LLM | ✅ Built, fully tested, wired into the live pipeline |
-| Entity dedup (prevents duplicate records) | ✅ Built, tested with synthetic vectors, **and proven across real pipeline runs** (see Phase 5 dedup test) |
-| Dynamic new-record analysis (Surprise Record Test) | ✅ **Working end-to-end via `POST /api/processes/analyze`** — validated, tested, one gap: live Groq/embedding calls inside this exact endpoint need your credentials (same as Phase 4; try it with `scripts/bootstrap_minimal_data.py`) |
+| Entity dedup (prevents duplicate records) | ✅ Built, tested with synthetic vectors, **and proven across real pipeline runs with two independent live Groq calls** (see decision log) |
+| Dynamic new-record analysis (Surprise Record Test) | ✅ **Working end-to-end, confirmed live** via `POST /api/processes/analyze` against real Supabase + Groq — see decision log for the full run |
+| Seed data uses the same mechanism as dynamic analysis | ✅ `scripts/seed_processes.py` calls the identical `ProcessAnalysisPipeline` as the live API — not a separate code path (Phase 6) |
 | Real frontend | ⏳ Phase 7 |
-| Tests | ✅ 68 passing |
-| No hard-coded responses | ✅ By construction — the pipeline that handles the MODUS example ("Warehouse Inventory Forecasting") is the exact same code path as every other input |
-| Real frontend | ⏳ Phase 6 |
-| Tests | ✅ 45 passing |
-| No hard-coded responses | ✅ By construction — every "decision" (score, trend, match) is a tested function of its inputs, nothing is a fixed string |
+| Tests | ✅ 82 passing |
+| No hard-coded responses | ✅ By construction — the pipeline that handled the MODUS example ("Warehouse Inventory Forecasting") live is the exact same code path as every other input, including all 10 seed processes |
 
 Full checklist tracked in `docs/architecture/decision-log.md`.
