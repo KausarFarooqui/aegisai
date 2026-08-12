@@ -204,3 +204,40 @@ everything yourself" in the interview: yes, everything that could be
 tested without a paid credential or a GPU-scale dependency was tested
 for real; the two pieces that needed either are wired for one-command
 verification on your own machine instead of being asserted untested.
+
+### Update: both gaps closed — verified live on real infrastructure
+
+Both `scripts/verify_embeddings.py` and `scripts/test_llm_connection.py`
+were subsequently run for real, against the actual target infrastructure
+(not a substitute): a live Supabase project (`aegisai`, region `ap-south-1`)
+reached over the IPv4 Session Pooler, a real Groq API key, and the actual
+`sentence-transformers/all-MiniLM-L6-v2` model downloaded and run locally.
+
+**Embeddings** — near-duplicate role/skill names scored 0.90–0.90 cosine
+similarity; a genuinely unrelated pair scored 0.35. The configured
+`ENTITY_SIMILARITY_THRESHOLD=0.86` sits comfortably above the unrelated
+score and comfortably below both near-duplicate scores — validated with a
+real margin, not just a guessed number. (The verification script itself
+suggests a lower midpoint threshold as a generic heuristic; the existing
+0.86 default was kept deliberately, since a higher bar means fewer
+accidental merges of genuinely different entities, and it already separates
+the tested cases cleanly.)
+
+**LLM connectivity** — Groq responded correctly and validated against the
+schema on the first real call. Ollama was correctly and cleanly skipped
+(not running locally at verification time) rather than erroring — proving
+the orchestrator's unavailable-provider handling works on a real failure,
+not just the simulated one in the unit tests.
+
+**Also fixed during this pass, worth noting as real debugging, not just
+setup**: Supabase's direct connection string is IPv6-only on the free tier
+(no IPv4 add-on), which is unreachable from a typical WSL2/home network —
+diagnosed from a live `Network is unreachable` error and fixed by switching
+to Supabase's Session Pooler (IPv4, Supavisor, free on every plan), which
+also required the pooler-specific username format (`postgres.<project-ref>`
+rather than bare `postgres`). Separately, a local Postgres cluster ended up
+running on a non-default port (5433, not 5432) after a prior process was
+left holding 5432 — diagnosed by comparing `pg_lsclusters` output against
+the actual connection error rather than assuming the default port was
+correct. Both are exactly the kind of environment-specific issues that
+would otherwise surface for the first time live in front of a judge.

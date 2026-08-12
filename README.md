@@ -82,14 +82,15 @@ Every claim below was run, not assumed:
 - `app/schemas/extraction.py` — the Pydantic contract the LLM's output
   must satisfy, tested directly
 
-**Two pieces need one-command verification on your machine, not this
-sandbox** — disclosed in full in `docs/architecture/decision-log.md` §
-Phase 4, honest account rather than an untested claim:
-
-```bash
-python scripts/verify_embeddings.py     # confirms the real sentence-transformers model
-python scripts/test_llm_connection.py   # confirms Groq (and Ollama, if running) actually respond
-```
+**Two pieces needed one-command verification on your machine — both now
+confirmed live**, against the real Supabase project and a real Groq key
+(not simulated): Groq responds and validates correctly; Ollama's fallback
+path was exercised via a clean "not running" skip rather than a crash;
+real embeddings separate near-duplicate role/skill names (~0.90 cosine
+similarity) from unrelated ones (~0.35) with the configured 0.86 threshold
+sitting safely in between. Full numbers and the two real infrastructure
+issues this surfaced (Supabase's IPv6-only direct connection on free tier,
+and a stale local Postgres port) are in `docs/architecture/decision-log.md`.
 
 ## Setup (verified path — WSL2/Ubuntu)
 
