@@ -15,6 +15,7 @@ from sqlalchemy import text
 
 from app.config.settings import get_settings
 from app.db.session import engine
+from app.api.routes import api_router
 
 settings = get_settings()
 
@@ -35,6 +36,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(api_router)
 
 
 @app.get("/api/health", tags=["system"])

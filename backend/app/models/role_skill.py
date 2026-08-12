@@ -13,11 +13,18 @@ declining" a live, explainable query instead of a label someone typed once.
 import enum
 import uuid
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import ForeignKey, String, Table, Text, Column
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, ProvenanceMixin, TimestampMixin, UUIDPKMixin, pg_enum
+
+# Matches EMBEDDING_DIMENSIONS in settings — all-MiniLM-L6-v2's output size.
+# Not read from Settings here because column dimensions are fixed at the
+# database schema level; changing embedding models to one with a different
+# dimension count requires a migration, not a config change.
+EMBEDDING_DIM = 384
 
 
 class SkillTrend(str, enum.Enum):
@@ -35,6 +42,12 @@ class Role(Base, UUIDPKMixin, TimestampMixin, ProvenanceMixin):
 
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     current_responsibilities: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    """Embedding of `title`, populated at creation time. Nullable because
+    seed-data roles created before this column existed (or via a path that
+    skips embedding for some reason) shouldn't break inserts — but any role
+    without an embedding is invisible to dedup search, so the seed script
+    and analysis pipeline both populate this on every insert."""
 
     activities: Mapped[list["Activity"]] = relationship(  # noqa: F821
         secondary="activity_roles", back_populates="roles"
@@ -61,6 +74,9 @@ class Skill(Base, UUIDPKMixin, TimestampMixin, ProvenanceMixin):
     """One-line, machine-written explanation of *why* the trend is what it is
     (e.g. 'Linked to 3 AI opportunities classed HIGH automation potential') —
     this is what answers 'why does the system believe this' in the UI."""
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    """Embedding of `name` — see Role.embedding docstring for why this
+    exists and the nullability rationale."""
 
     roles: Mapped[list["Role"]] = relationship(
         secondary="role_skills", back_populates="skills"

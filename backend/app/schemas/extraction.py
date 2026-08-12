@@ -14,7 +14,7 @@ final relationship decision. Everything downstream of this schema (scoring,
 dedup, persistence) is deterministic application code — see
 app/scoring/impact_score.py and app/services/dedup_service.py.
 """
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ProposedFactor(BaseModel):
@@ -29,6 +29,11 @@ class ProposedAIOpportunity(BaseModel):
     human_ai_responsibility: str
     business_benefit: str = Field(..., max_length=500)
     risks: str = Field(..., max_length=500)
+    affected_activity_names: list[str] = Field(..., min_length=1, max_length=6)
+    """Must reference names from the top-level `activities` list — builds
+    the Activity->AIOpportunity graph edges. An opportunity that doesn't
+    plausibly attach to a specific activity in this process shouldn't be
+    proposed at all."""
     factor_repetitiveness: ProposedFactor
     factor_data_availability: ProposedFactor
     factor_predictability: ProposedFactor
@@ -43,6 +48,10 @@ class ProposedRole(BaseModel):
     shown in context. This is a HINT, not a decision — dedup_service.py
     makes the actual call via embedding similarity regardless of what the
     LLM guessed here."""
+    requires_skill_names: list[str] = Field(..., min_length=1, max_length=8)
+    """Must reference names from the sibling `skills` list by exact string
+    match (case-insensitive) — this is what lets the pipeline build the
+    Role->Skill graph edges instead of guessing."""
 
 
 class ProposedSkill(BaseModel):
@@ -54,6 +63,9 @@ class ProposedSkill(BaseModel):
 class ProposedActivity(BaseModel):
     name: str = Field(..., min_length=3, max_length=200)
     description: str = Field(..., max_length=500)
+    performed_by_role_titles: list[str] = Field(..., min_length=1, max_length=5)
+    """Must reference titles from the sibling `roles` list by exact string
+    match (case-insensitive) — builds the Activity->Role graph edges."""
 
 
 class EntityExtractionResult(BaseModel):
@@ -79,3 +91,42 @@ class EntityExtractionResult(BaseModel):
             if len(names) != len(set(names)):
                 raise ValueError(f"Duplicate names within a single extraction response: {names}")
         return items
+
+    @model_validator(mode="after")
+    def _cross_references_resolve(self) -> "EntityExtractionResult":
+        """
+        Every cross-reference must point at a name that actually exists in
+        its sibling list. This is what turns "the LLM hallucinated a role
+        name that doesn't exist anywhere else in its own response" from a
+        silently broken graph edge into a loud validation failure the
+        pipeline can retry or fail cleanly on.
+        """
+        activity_names = {a.name.strip().lower() for a in self.activities}
+        role_titles = {r.title.strip().lower() for r in self.roles}
+        skill_names = {s.name.strip().lower() for s in self.skills}
+
+        for activity in self.activities:
+            for role_title in activity.performed_by_role_titles:
+                if role_title.strip().lower() not in role_titles:
+                    raise ValueError(
+                        f"Activity '{activity.name}' references role "
+                        f"'{role_title}' which is not in the roles list."
+                    )
+
+        for role in self.roles:
+            for skill_name in role.requires_skill_names:
+                if skill_name.strip().lower() not in skill_names:
+                    raise ValueError(
+                        f"Role '{role.title}' references skill '{skill_name}' "
+                        f"which is not in the skills list."
+                    )
+
+        for opportunity in self.ai_opportunities:
+            for activity_name in opportunity.affected_activity_names:
+                if activity_name.strip().lower() not in activity_names:
+                    raise ValueError(
+                        f"AI opportunity '{opportunity.name}' references activity "
+                        f"'{activity_name}' which is not in the activities list."
+                    )
+
+        return self

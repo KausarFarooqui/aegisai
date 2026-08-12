@@ -14,9 +14,15 @@ def _valid_payload() -> dict:
         "business_purpose": "Assess creditworthiness of loan applicants using financial history.",
         "current_challenges": "Manual document review is slow and error-prone.",
         "activities": [
-            {"name": "Review applicant financial statements", "description": "Manual review of submitted documents."}
+            {
+                "name": "Review applicant financial statements",
+                "description": "Manual review of submitted documents.",
+                "performed_by_role_titles": ["Credit Analyst"],
+            }
         ],
-        "roles": [{"title": "Credit Analyst", "is_new": False}],
+        "roles": [
+            {"title": "Credit Analyst", "is_new": False, "requires_skill_names": ["Credit Risk Assessment"]}
+        ],
         "skills": [{"name": "Credit Risk Assessment", "category": "analytical", "is_new": False}],
         "ai_opportunities": [
             {
@@ -26,6 +32,7 @@ def _valid_payload() -> dict:
                 "human_ai_responsibility": "ai_automates",
                 "business_benefit": "Faster loan processing turnaround.",
                 "risks": "Extraction errors on non-standard document formats.",
+                "affected_activity_names": ["Review applicant financial statements"],
                 "factor_repetitiveness": {"value": 90, "reason": "Same document types processed daily."},
                 "factor_data_availability": {"value": 85, "reason": "Digitized documents already available."},
                 "factor_predictability": {"value": 80, "reason": "Document structure is fairly consistent."},
@@ -66,8 +73,8 @@ def test_rejects_too_many_ai_opportunities():
 def test_rejects_duplicate_role_titles():
     payload = _valid_payload()
     payload["roles"] = [
-        {"title": "Credit Analyst", "is_new": False},
-        {"title": "credit analyst", "is_new": True},  # same name, different case
+        {"title": "Credit Analyst", "is_new": False, "requires_skill_names": ["Credit Risk Assessment"]},
+        {"title": "credit analyst", "is_new": True, "requires_skill_names": ["Credit Risk Assessment"]},  # same name, different case
     ]
     with pytest.raises(ValidationError, match="Duplicate names"):
         EntityExtractionResult.model_validate(payload)
@@ -85,3 +92,33 @@ def test_rejects_missing_required_field():
     del payload["skills"]
     with pytest.raises(ValidationError):
         EntityExtractionResult.model_validate(payload)
+
+
+def test_rejects_activity_referencing_nonexistent_role():
+    payload = _valid_payload()
+    payload["activities"][0]["performed_by_role_titles"] = ["Nonexistent Role"]
+    with pytest.raises(ValidationError, match="not in the roles list"):
+        EntityExtractionResult.model_validate(payload)
+
+
+def test_rejects_role_referencing_nonexistent_skill():
+    payload = _valid_payload()
+    payload["roles"][0]["requires_skill_names"] = ["Nonexistent Skill"]
+    with pytest.raises(ValidationError, match="not in the skills list"):
+        EntityExtractionResult.model_validate(payload)
+
+
+def test_rejects_opportunity_referencing_nonexistent_activity():
+    payload = _valid_payload()
+    payload["ai_opportunities"][0]["affected_activity_names"] = ["Nonexistent Activity"]
+    with pytest.raises(ValidationError, match="not in the activities list"):
+        EntityExtractionResult.model_validate(payload)
+
+
+def test_cross_reference_matching_is_case_insensitive():
+    """The LLM shouldn't be penalized for trivial casing differences —
+    only genuinely dangling references should fail."""
+    payload = _valid_payload()
+    payload["activities"][0]["performed_by_role_titles"] = ["CREDIT ANALYST"]
+    result = EntityExtractionResult.model_validate(payload)
+    assert result.activities[0].performed_by_role_titles == ["CREDIT ANALYST"]

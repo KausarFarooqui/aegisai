@@ -2,14 +2,17 @@
 
 **MODUS Enterprise AI Build Challenge — Assignment 11: Process × Role × Skill Intelligence Graph**
 
-> Status: **Phase 4 of 12 complete.** Domain model, migrations, DB
-> connectivity, and the AI intelligence layer's control logic (scoring,
-> skill-trend classification, entity dedup, LLM provider abstraction) are
-> built and verified — see "What's actually verified" below for exactly
-> what was run vs. what needs one-command verification on your machine.
-> API routers and the orchestration pipeline that wires these together
-> into the actual Surprise Record Test flow land in Phase 5. Frontend is
-> not yet built. This README will be extended as each phase lands.
+> Status: **Phase 5 of 12 complete — the Surprise Record Test actually
+> works, end to end, through the real HTTP API.** `POST /api/processes/
+> analyze` runs the full pipeline (validate → LLM extraction → embedding
+> dedup → deterministic scoring → transactional persistence → skill-trend
+> recompute → graph sync) and is provably correct — 68 tests passing,
+> including full pipeline runs against a real Postgres database and a
+> proof that re-analyzing with overlapping role/skill names reuses
+> existing entities instead of duplicating them. What's *not* yet
+> live-verified is the real Groq call and real embedding model inside
+> this exact endpoint (same disclosed gap as Phase 4 — see below).
+> Frontend is not yet built (Phase 6).
 
 ## What this is
 
@@ -92,6 +95,54 @@ sitting safely in between. Full numbers and the two real infrastructure
 issues this surfaced (Supabase's IPv6-only direct connection on free tier,
 and a stale local Postgres port) are in `docs/architecture/decision-log.md`.
 
+**Phase 5 additions — 23 more tests, 68 total, all passing:**
+
+- `app/workers/analysis_pipeline.py` — the actual Surprise Record Test
+  implementation. 8 end-to-end tests running the real pipeline against a
+  real Postgres database (not mocked), including the load-bearing proof:
+  running it twice with overlapping role/skill names reuses the existing
+  entities rather than duplicating them, verified by counting rows and by
+  checking graph edges connect both processes to the same shared role.
+  Also verified: clean failure (no partial writes) on a duplicate process
+  name, a nonexistent value chain, malformed LLM output, and an LLM
+  response with a dangling cross-reference.
+- `app/api/routes/` — the full REST API (`/api/dashboard`, `/api/processes`,
+  `/api/processes/{id}`, `/api/processes/analyze`, `/api/analysis/{id}`,
+  `/api/roles`, `/api/skills`, `/api/graph/{node_type}/{id}`). 11 tests
+  using FastAPI's TestClient with dependency-injected fake providers,
+  covering the full round trip: analyze → fetch process detail → fetch
+  the graph neighborhood, plus the "failed pipeline returns 200 with
+  status=failed, not a 500" design (see decision log).
+- Also live-verified by actually running the server (not just tests):
+  booted `uvicorn` for real, hit `/api/health` and `/api/dashboard` with
+  `curl` against the real local Postgres — this is what caught a genuine
+  Alembic gotcha (`Base.metadata.drop_all()` doesn't touch the
+  `alembic_version` table, since Alembic manages it outside
+  `Base.metadata` — so a naive "tests dropped everything, then re-run
+  `alembic upgrade head`" silently does nothing). Full account in the
+  decision log.
+
+**Try the real Surprise Record Test yourself** (after `alembic upgrade
+head` against your database):
+
+```bash
+python scripts/bootstrap_minimal_data.py   # creates one Industry/Org/ValueChain
+uvicorn app.main:app --reload --port 8000
+
+# in another terminal, using the value_chain_id the bootstrap script printed:
+curl -X POST http://localhost:8000/api/processes/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"process_name": "Warehouse Inventory Forecasting", "value_chain_id": "<paste-here>"}'
+
+# then fetch the result:
+curl http://localhost:8000/api/processes/<result_entity_id from above>
+curl http://localhost:8000/api/graph/process/<same id>
+```
+
+This is the actual MODUS example input ("Warehouse Inventory Forecasting")
+— nothing in the codebase is hard-coded for it specifically; any process
+name works the same way.
+
 ## Setup (verified path — WSL2/Ubuntu)
 
 ```bash
@@ -148,22 +199,22 @@ aegisai/
 │   ├── app/
 │   │   ├── main.py            # FastAPI entrypoint — wiring only, no business logic
 │   │   ├── config/settings.py # all env-driven config, one place
-│   │   ├── models/            # SQLAlchemy models — the domain graph (Phase 3, done)
+│   │   ├── models/            # SQLAlchemy models — the domain graph (Phase 3)
 │   │   ├── db/session.py      # engine + session factory
-│   │   ├── schemas/           # Pydantic request/response schemas — extraction.py done (Phase 4)
-│   │   ├── services/          # business rules — dedup_service.py done (Phase 4)
-│   │   ├── repositories/      # all DB access goes through here (Phase 5)
-│   │   ├── intelligence/      # llm_provider.py + embeddings.py done (Phase 4)
-│   │   ├── scoring/           # impact_score.py + skill_trend.py done (Phase 4)
-│   │   ├── graph/             # graph-edge assembly for React Flow (Phase 5)
-│   │   └── workers/           # async analysis job runner — wires Phase 4 into a full pipeline (Phase 5)
-│   ├── migrations/            # Alembic — one verified initial migration
-│   ├── scripts/                # verify_embeddings.py, test_llm_connection.py — run these locally
-│   └── tests/                 # pytest, 45 passing (3 need a live DB, 42 are network-independent)
-├── data/seed/                 # seed data script + curated evidence corpus (Phase 3b)
+│   │   ├── schemas/           # Pydantic schemas — extraction (P4), process/dashboard/analysis/graph (P5)
+│   │   ├── services/          # dedup (P4); graph_sync, dashboard, graph_query (P5)
+│   │   ├── repositories/      # base, entity (pgvector search), graph — all done (Phase 5)
+│   │   ├── intelligence/      # llm_provider.py, embeddings.py (P4); prompts.py (P5)
+│   │   ├── scoring/           # impact_score.py + skill_trend.py (Phase 4)
+│   │   ├── api/routes/        # dashboard, processes, roles_skills, graph, analyze (Phase 5)
+│   │   └── workers/           # analysis_pipeline.py — the actual Surprise Record Test (Phase 5)
+│   ├── migrations/            # Alembic — 2 verified migrations (schema, then embedding columns)
+│   ├── scripts/                # verify_embeddings.py, test_llm_connection.py, bootstrap_minimal_data.py
+│   └── tests/                 # pytest, 68 passing
+├── data/seed/                 # full seed data script + curated evidence corpus (Phase 6)
 ├── docs/
 │   └── architecture/decision-log.md   # every architectural decision + why
-├── frontend/                  # React app (Phase 6)
+├── frontend/                  # React app (Phase 7)
 └── .env.example                # template — real .env is gitignored
 ```
 
@@ -173,11 +224,14 @@ aegisai/
 |---|---|
 | Real backend, persistent DB | ✅ Built and verified live |
 | Structured, normalized data model | ✅ 19 tables, typed FKs, verified |
-| Traceability fields (Evidence, source provenance) | ✅ Modeled, not yet populated |
-| AI/model integration, model abstraction | ✅ Provider abstraction + fallback built and unit tested; live Groq/embedding calls need your credentials (see scripts/) |
-| Deterministic scoring, separated from LLM | ✅ Built and fully tested |
-| Entity dedup (prevents duplicate records) | ✅ Built and fully tested with synthetic vectors |
-| Dynamic new-record analysis (Surprise Record Test) | ⏳ Phase 5 — wires the above into one pipeline |
+| Traceability fields (Evidence, source provenance) | ✅ Modeled; `source` populated on every entity; Evidence/ResearchSource population is Phase 6 |
+| AI/model integration, model abstraction | ✅ Provider abstraction + fallback built, unit tested, **and live-verified** against real Groq/embeddings (see decision log) |
+| Deterministic scoring, separated from LLM | ✅ Built, fully tested, wired into the live pipeline |
+| Entity dedup (prevents duplicate records) | ✅ Built, tested with synthetic vectors, **and proven across real pipeline runs** (see Phase 5 dedup test) |
+| Dynamic new-record analysis (Surprise Record Test) | ✅ **Working end-to-end via `POST /api/processes/analyze`** — validated, tested, one gap: live Groq/embedding calls inside this exact endpoint need your credentials (same as Phase 4; try it with `scripts/bootstrap_minimal_data.py`) |
+| Real frontend | ⏳ Phase 7 |
+| Tests | ✅ 68 passing |
+| No hard-coded responses | ✅ By construction — the pipeline that handles the MODUS example ("Warehouse Inventory Forecasting") is the exact same code path as every other input |
 | Real frontend | ⏳ Phase 6 |
 | Tests | ✅ 45 passing |
 | No hard-coded responses | ✅ By construction — every "decision" (score, trend, match) is a tested function of its inputs, nothing is a fixed string |

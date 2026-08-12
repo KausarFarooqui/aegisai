@@ -8,11 +8,13 @@ because these are the two entity types the Surprise Record Test creates live.
 """
 import uuid
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, ProvenanceMixin, TimestampMixin, UUIDPKMixin
+from app.models.role_skill import EMBEDDING_DIM
 
 
 class ValueChain(Base, UUIDPKMixin, TimestampMixin):
@@ -61,6 +63,8 @@ class Activity(Base, UUIDPKMixin, TimestampMixin, ProvenanceMixin):
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    """Embedding of `name` — same dedup purpose as Role.embedding/Skill.embedding."""
 
     process_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("processes.id", ondelete="CASCADE")
