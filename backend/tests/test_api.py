@@ -179,3 +179,32 @@ def test_skills_filter_by_trend(client, value_chain):
 def test_skills_filter_rejects_invalid_trend_value(client):
     resp = client.get("/api/skills", params={"trend": "not_a_real_trend"})
     assert resp.status_code == 400
+
+
+def test_opportunities_endpoint_lists_opportunities_created_by_analyze(client, value_chain):
+    analyze_resp = client.post(
+        "/api/processes/analyze",
+        json={"process_name": "Warehouse Inventory Forecasting", "value_chain_id": str(value_chain.id)},
+    )
+    assert analyze_resp.json()["status"] == "completed"
+
+    resp = client.get("/api/opportunities")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["name"] == "Automated Document Extraction"
+    assert body[0]["assessment"]["total_score"] == pytest.approx(84.45)
+
+
+def test_opportunities_endpoint_empty_state(client):
+    resp = client.get("/api/opportunities")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_value_chains_endpoint_lists_the_test_value_chain(client, value_chain):
+    resp = client.get("/api/value-chains")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert any(vc["id"] == str(value_chain.id) for vc in body)
+    assert any(vc["name"] == value_chain.name for vc in body)

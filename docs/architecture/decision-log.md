@@ -590,3 +590,121 @@ not tuned against the real 10-process dataset's actual output — that's
 the honest next step once there's enough real data to see whether these
 specific numbers produce a sensible-looking distribution, rather than
 adjusting them now based on a single run.
+
+---
+
+## Phase 7 — the frontend
+
+### Design grounding
+
+AEGISAI is enterprise banking software judged by engineers, not a
+marketing site — the MODUS brief explicitly warns against "generic AI
+landing-page aesthetics." The palette, type pairing, and the graph's
+visual treatment are all deliberately grounded in the product's own name
+rather than reached for as defaults:
+
+- **Palette**: `ink` `#0b1220` (near-black navy, not pure black), `surface`
+  `#f7f8fa` (cool off-white, not the cream `#F4F1EA` that's become an
+  AI-generated-design tell), `navy` `#1b2a4a` (structural/primary), `star`
+  `#d4a73c` (the *one* accent, spent deliberately — the graph and active
+  nav states only, not scattered across the UI). Impact and skill-trend
+  color scales run calm-to-urgent (slate → teal → amber → rust), never
+  neon.
+- **Type**: Space Grotesk (headers) + IBM Plex Sans (body — literally
+  designed for enterprise software, which is thematically apt) + IBM Plex
+  Mono (every number, ID, and score — functional, not decorative, and
+  reinforces that this is a data-dense working tool rather than a
+  content site).
+- **Signature element**: the Intelligence Graph renders as a
+  constellation — dark navy canvas, AI opportunities as glowing
+  star-points (using the literal star glyph), everything else as quieter
+  supporting structure. This isn't decoration bolted onto the graph MODUS
+  requires — it's a genuine information-hierarchy choice: AI opportunities
+  *are* the most actionable nodes in the graph, so they're the ones lit
+  up, which is also exactly the "Northstar" metaphor the bank's name
+  already supplies.
+
+### Three backend gaps found and closed while building the frontend, not before
+
+Building the Analyze form and the Opportunities page surfaced three things
+the backend never exposed, despite processes/roles/skills/graph all having
+list endpoints:
+
+1. **No `GET /api/opportunities`** — one of the 8 MODUS-required pages had
+   no endpoint to back it.
+2. **No `GET /api/value-chains`**, and **no process response exposed
+   `value_chain_id`** — meaning there was no way for a client to know
+   what value chains exist at all, which is required information for the
+   Analyze form (every `POST /api/processes/analyze` call needs one).
+
+All three added with the same patterns already established elsewhere
+(repository + schema + router + test) rather than as one-off hacks —
+`test_opportunities_endpoint_lists_opportunities_created_by_analyze` and
+`test_value_chains_endpoint_lists_the_test_value_chain` both run against a
+real database, not mocked. 94 backend tests passing after these additions.
+
+### TypeScript types are hand-mirrored from the Pydantic schemas, not generated
+
+`frontend/src/api/types.ts` mirrors `backend/app/schemas/*.py` field for
+field, kept in the same snake_case as the real JSON wire format — no
+casing-transform layer that could silently drift from what the backend
+actually sends. This was verified directly, not assumed: every endpoint
+was hit against a real, ORM-seeded database (bypassing Groq — this needed
+no LLM call, just realistic data) and the actual JSON compared line by
+line against the TypeScript interfaces. All matched exactly on the first
+real check. The tradeoff of hand-mirroring instead of codegen is real —
+if a backend schema changes, nothing forces the TypeScript type to update
+— but codegen tooling was judged not worth the setup cost for this many
+endpoints in the time available; worth revisiting if this codebase grows
+substantially.
+
+### Two real build-tooling issues, both caught by actually running the build, not assumed away
+
+**Tailwind v4 uses a fundamentally different setup than v3** — CSS-based
+`@theme` blocks instead of a `tailwind.config.js` JS object, and a
+dedicated `@tailwindcss/vite` plugin instead of the old PostCSS
+config-and-directives approach. The installed version (checked directly
+rather than assumed from memory) was v4, so the whole token system was
+built around `@theme` from the start rather than retrofitted.
+
+**The `@` path alias was only configured for Vite's bundler
+(`vite.config.ts`), not for TypeScript's own type-checker** — `tsc`
+doesn't read Vite's config, so every `@/...` import failed with
+`TS2307: Cannot find module` until the equivalent `paths` mapping was
+added to `tsconfig.app.json`. This produced ~90 cascading errors on the
+first real build attempt (most files import something via `@/`), which
+looked alarming until traced to this single root cause — worth remembering
+as a reminder to look for the one shared cause behind a wall of errors
+before fixing them individually.
+
+### Honest verification status
+
+What was actually verified, not just written: `tsc -b` compiles with zero
+errors; `vite build` produces a working production bundle (confirmed by
+serving it with `vite preview` and curling both the served `index.html`
+and the JS bundle — both returned correctly); every API response the
+frontend depends on was checked against a real, seeded database and
+matched the TypeScript types exactly, field for field. Code-splitting was
+added for the two heaviest pages (Graph's `reactflow`, Dashboard's
+`recharts`) after the initial build produced one 797KB chunk — the split
+build's main bundle is 303KB.
+
+**What was not verified, because this sandbox has no browser automation
+tool**: actual rendering. Nothing confirms the constellation graph
+actually looks like a constellation, that the layout doesn't overlap at
+real data volumes, or that any interaction (click-to-explore on graph
+nodes, the analyze form's loading state) behaves correctly in a real
+browser. This is a materially different, weaker guarantee than every
+other phase of this project, which has been end-to-end tested against
+real infrastructure — disclosed plainly rather than implied away, the
+same standard applied everywhere else in this log. Opening it in a real
+browser on your machine is the next real verification step, not optional
+polish.
+
+Also not yet built: production static-file serving (the API client uses
+relative `/api/...` paths, which needs the frontend served from the same
+origin as the backend or behind a reverse proxy — not yet wired as a
+one-command deploy path), and a couple of pages MODUS mentions
+(standalone Evidence/Research browse, the AI Analyst natural-language
+interface) that were out of scope for this pass — noted as a real gap,
+not silently dropped.

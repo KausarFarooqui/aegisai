@@ -87,3 +87,11 @@ class ProcessDetailOut(BaseModel):
     current_challenges: str | None
     source: str
     activities: list[ActivityOut] = []
+
+
+class ValueChainOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    sequence_order: int

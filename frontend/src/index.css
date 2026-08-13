@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------
+   AEGISAI design tokens.
+   Palette grounded in the product's own name — Northstar Bank —
+   navigation by a fixed point of light against a dark sky. `star` is
+   the one accent color, spent deliberately (the constellation graph,
+   active nav states, high-impact highlights) rather than scattered.
+   ------------------------------------------------------------------ */
+@theme {
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+  --color-ink: #0b1220;
+  --color-ink-soft: #2a3548;
+  --color-surface: #f7f8fa;
+  --color-surface-raised: #ffffff;
+  --color-border: #e2e5eb;
+
+  --color-navy: #1b2a4a;
+  --color-navy-deep: #0f1930;
+  --color-navy-soft: #33456b;
+
+  --color-star: #d4a73c;
+  --color-star-soft: #f0dca3;
+  --color-star-glow: #fff4d6;
+
+  /* Impact scale — deliberately calm-to-urgent, never neon */
+  --color-impact-low: #64748b;
+  --color-impact-medium: #2f7d8c;
+  --color-impact-high: #c68a2e;
+  --color-impact-very-high: #b4472a;
+
+  /* Skill trend scale */
+  --color-trend-emerging: #2f7d8c;
+  --color-trend-increasing: #3d8c5a;
+  --color-trend-augmented: #4a6a9e;
+  --color-trend-changing: #8b7fb0;
+  --color-trend-declining: #b4472a;
+  --color-trend-enduring: #1b2a4a;
+}
+
+html {
+  font-feature-settings: "tnum" 1;
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Visible keyboard focus everywhere — quality floor, not optional */
+:focus-visible {
+  outline: 2px solid var(--color-star);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Thin, quiet scrollbars for the dense dashboard panels */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-navy-soft); }

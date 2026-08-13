@@ -2,17 +2,19 @@
 
 **MODUS Enterprise AI Build Challenge — Assignment 11: Process × Role × Skill Intelligence Graph**
 
-> Status: **Phase 6 of 12 complete — the database is populated with a
-> real, connected intelligence graph, not just proven capable of holding
-> one.** `scripts/seed_processes.py` seeds 10 processes across two value
-> chains (Retail Lending; Trade Finance & Compliance) using the **exact
-> same pipeline** `POST /api/processes/analyze` uses — proof that seed
-> data and live dynamic-analysis data are produced by one mechanism, not
-> two. `scripts/seed_research_sources.py` loads a 20-source curated
-> evidence corpus (real, independently verified URLs — see decision log)
-> that the pipeline now automatically searches and cites against every AI
-> opportunity it creates. 82 tests passing. Frontend is not yet built
-> (Phase 7).
+> Status: **Phase 7 of 12 complete — there's a real frontend now.** React
+> + TypeScript + Tailwind v4, wired to the actual backend (no mock data),
+> covering 6 of the 8 MODUS-required pages: Executive Dashboard,
+> Intelligence Graph (React Flow, styled as a constellation — AI
+> opportunities render as the literal "stars"), Process/Role/Skill
+> Intelligence, AI Opportunities, and Analyze New Process (the Surprise
+> Record Test UI). Building it surfaced and closed 3 real backend gaps
+> (see below). TypeScript compiles clean, the production build works, and
+> every API response was checked against a real seeded database — but
+> **nothing has been verified in an actual browser yet**, since this
+> sandbox has no browser automation tool. That's the honest next step.
+> 94 backend tests passing. See `frontend/README.md` and the decision log
+> for the full account.
 
 ## What this is
 
@@ -267,6 +269,23 @@ chosen as the primary target, purely to verify the schema locally — see the
 decision log for why Supabase is still the recommended path for you day-to-day
 (avoids the disk-space issue from the BioVision AI project's Docker deploy).
 
+## Frontend setup
+
+```bash
+cd frontend
+npm install
+
+# in a separate terminal, start the backend first (frontend proxies /api to it):
+cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000
+
+# back in frontend/:
+npm run dev
+# open http://localhost:5173
+```
+
+Full details, design rationale, and honest verification status in
+`frontend/README.md`.
+
 ## Project structure
 
 ```
@@ -308,7 +327,7 @@ aegisai/
 | Entity dedup (prevents duplicate records) | ✅ Built, tested with synthetic vectors, **and proven across real pipeline runs with two independent live Groq calls** (see decision log) |
 | Dynamic new-record analysis (Surprise Record Test) | ✅ **Working end-to-end, confirmed live** via `POST /api/processes/analyze` against real Supabase + Groq — see decision log for the full run |
 | Seed data uses the same mechanism as dynamic analysis | ✅ `scripts/seed_processes.py` calls the identical `ProcessAnalysisPipeline` as the live API — not a separate code path (Phase 6) |
-| Real frontend | ⏳ Phase 7 |
+| Real frontend | ✅ Built, TypeScript-clean, production build verified; browser rendering not yet verified (see `frontend/README.md`) |
 | Tests | ✅ 91 passing |
 | No hard-coded responses | ✅ By construction — the pipeline that handled the MODUS example ("Warehouse Inventory Forecasting") live is the exact same code path as every other input, including all 10 seed processes |
 
