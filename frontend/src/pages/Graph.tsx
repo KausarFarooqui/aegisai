@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import ReactFlow, {
   Background,
@@ -16,13 +16,25 @@ import { LoadingState, EmptyState, ErrorState } from "@/components/States";
 import { layoutGraph } from "@/lib/graphLayout";
 import { formatNodeType } from "@/lib/format";
 import type { GraphNodeType } from "@/api/types";
+import { Boxes, Waypoints } from "lucide-react";
+import { cn } from "@/lib/cn";
 
 const nodeTypes = { constellation: ConstellationNode };
+
+// Lazy-loaded: react-force-graph-3d pulls in three.js, a genuinely heavy
+// dependency that people using only the 2D view (the default) shouldn't
+// have to download at all.
+const Graph3DView = lazy(() =>
+  import("@/components/Graph3DView").then((m) => ({ default: m.Graph3DView })),
+);
+
+type ViewMode = "2d" | "3d";
 
 export function GraphPage() {
   const [params, setParams] = useSearchParams();
   const rootType = (params.get("type") as GraphNodeType | null) ?? undefined;
   const rootId = params.get("id") ?? undefined;
+  const [viewMode, setViewMode] = useState<ViewMode>("2d");
 
   const { data: processes } = useProcesses();
   const { data: graph, isLoading, isError, error, refetch } = useGraph(rootType, rootId);
@@ -74,22 +86,38 @@ export function GraphPage() {
         title="Intelligence Graph"
         subtitle="Every AI opportunity renders as a star — click any node to explore its neighborhood"
         action={
-          <select
-            className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)]"
-            value={rootId ?? ""}
-            onChange={(e) => {
-              if (e.target.value) selectNode("process", e.target.value);
-            }}
-          >
-            <option value="" disabled>
-              Select a process to begin…
-            </option>
-            {processes?.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
+          <div className="flex items-center gap-3">
+            <div className="flex rounded-lg border border-[var(--color-border)] bg-white p-0.5">
+              <ViewToggleButton
+                active={viewMode === "2d"}
+                onClick={() => setViewMode("2d")}
+                icon={Waypoints}
+                label="2D"
+              />
+              <ViewToggleButton
+                active={viewMode === "3d"}
+                onClick={() => setViewMode("3d")}
+                icon={Boxes}
+                label="3D"
+              />
+            </div>
+            <select
+              className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)]"
+              value={rootId ?? ""}
+              onChange={(e) => {
+                if (e.target.value) selectNode("process", e.target.value);
+              }}
+            >
+              <option value="" disabled>
+                Select a process to begin…
               </option>
-            ))}
-          </select>
+              {processes?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
         }
       />
 
@@ -112,7 +140,8 @@ export function GraphPage() {
             <ErrorState message={(error as Error).message} onRetry={() => refetch()} />
           </div>
         )}
-        {rootId && graph && (
+
+        {rootId && graph && viewMode === "2d" && (
           <ReactFlow
             nodes={flowNodes}
             edges={flowEdges}
@@ -130,7 +159,19 @@ export function GraphPage() {
           </ReactFlow>
         )}
 
-        {hoveredLabel && (
+        {rootId && graph && viewMode === "3d" && (
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center">
+                <LoadingState label="Loading 3D renderer" />
+              </div>
+            }
+          >
+            <Graph3DView graph={graph} rootId={rootId} onNodeSelect={selectNode} />
+          </Suspense>
+        )}
+
+        {hoveredLabel && viewMode === "2d" && (
           <div className="pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white backdrop-blur-sm">
             {hoveredLabel}
           </div>
@@ -139,10 +180,39 @@ export function GraphPage() {
         {graph && (
           <div className="absolute right-4 top-4 rounded-lg bg-black/40 px-3 py-2 text-[11px] text-white/60 backdrop-blur-sm">
             <Legend />
+            {viewMode === "3d" && (
+              <p className="mt-2 border-t border-white/10 pt-2 text-white/40">
+                Drag to orbit · scroll to zoom · click a node to focus
+              </p>
+            )}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function ViewToggleButton({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: typeof Boxes;
+  label: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors",
+        active ? "bg-[var(--color-navy)] text-white" : "text-slate-500 hover:text-[var(--color-ink)]",
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" /> {label}
+    </button>
   );
 }
 

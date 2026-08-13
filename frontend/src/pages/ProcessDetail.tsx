@@ -33,6 +33,8 @@ export function ProcessDetailPage() {
     <>
       <PageHeader
         title={process.name}
+        backTo="/processes"
+        backLabel="Back to Processes"
         action={
           <Link
             to={`/graph?type=process&id=${process.id}`}

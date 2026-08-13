@@ -100,6 +100,8 @@ export function SkillDetailPage() {
     <>
       <PageHeader
         title={skill.name}
+        backTo="/skills"
+        backLabel="Back to Skills"
         action={
           <Link
             to={`/graph?type=skill&id=${skill.id}`}

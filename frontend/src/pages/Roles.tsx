@@ -57,6 +57,8 @@ export function RoleDetailPage() {
     <>
       <PageHeader
         title={role.title}
+        backTo="/roles"
+        backLabel="Back to Roles"
         action={
           <Link
             to={`/graph?type=role&id=${role.id}`}

@@ -2,18 +2,20 @@
 
 **MODUS Enterprise AI Build Challenge — Assignment 11: Process × Role × Skill Intelligence Graph**
 
-> Status: **Phase 7 of 12 complete — there's a real frontend now.** React
-> + TypeScript + Tailwind v4, wired to the actual backend (no mock data),
-> covering 6 of the 8 MODUS-required pages: Executive Dashboard,
-> Intelligence Graph (React Flow, styled as a constellation — AI
-> opportunities render as the literal "stars"), Process/Role/Skill
-> Intelligence, AI Opportunities, and Analyze New Process (the Surprise
-> Record Test UI). Building it surfaced and closed 3 real backend gaps
-> (see below). TypeScript compiles clean, the production build works, and
-> every API response was checked against a real seeded database — but
-> **nothing has been verified in an actual browser yet**, since this
-> sandbox has no browser automation tool. That's the honest next step.
-> 94 backend tests passing. See `frontend/README.md` and the decision log
+> Status: **Phase 8 of 12 complete — confirmed working in a real browser
+> for the first time**, via actual screenshots (dashboard, graph, roles
+> list/detail all rendering correctly with real data). That feedback
+> surfaced two genuine UX gaps (no sidebar collapse, no back navigation
+> on detail pages — both fixed) and a request for a 3D graph view, now
+> built alongside the original 2D one (toggle between them) using
+> `react-force-graph-3d` — AI opportunities render as true glowing
+> billboard sprites, not flat shapes, so they read as points of light
+> from any orbit angle. TypeScript compiles clean, production build
+> succeeds, the 3D bundle is correctly lazy-loaded (~366KB gzipped, only
+> downloaded if someone clicks into 3D mode). **Still not independently
+> verified**: whether the 3D scene actually renders and feels right —
+> that's on you to confirm, same as before. 94 backend tests passing.
+> See `frontend/README.md` and the decision log
 > for the full account.
 
 ## What this is

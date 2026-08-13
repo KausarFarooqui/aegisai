@@ -708,3 +708,90 @@ one-command deploy path), and a couple of pages MODUS mentions
 (standalone Evidence/Research browse, the AI Analyst natural-language
 interface) that were out of scope for this pass — noted as a real gap,
 not silently dropped.
+
+---
+
+## Phase 8 — 3D graph, and two real UX gaps from actual screenshots
+
+The first real screenshots of Phase 7 running in a browser surfaced two
+genuine, fair complaints, plus a request for a 3D graph view. All three
+addressed here.
+
+### Collapsible sidebar and back navigation
+
+Both straightforward, real gaps: the sidebar had no collapse control, and
+every detail page (Process/Role/Skill) had no way back except the browser
+button or re-clicking the sidebar. Fixed with a collapse toggle
+(persisted to `localStorage` — real browser storage is fine here, unlike
+in claude.ai Artifacts, since this is genuine deployed application code,
+not an in-conversation sandboxed preview) and a `backTo`/`backLabel` prop
+on the shared `PageHeader` component, wired into all three detail pages.
+
+### Why `react-force-graph-3d` over hand-rolling Three.js directly
+
+The request was for a 3D graph view. Rather than build a physics
+simulation and WebGL scene management from scratch, `react-force-graph-3d`
+is the established, well-maintained real tool for exactly this — a
+Three.js-based force-directed graph with a proper React wrapper (`ref`-
+exposed camera/scene methods, typed node/link accessors). Checked its
+actual shipped TypeScript definitions directly (`node_modules/.../
+react-force-graph-3d.d.ts`) rather than assumed the API from memory or
+older documentation, which is what caught the real default-export naming
+(`export { ForceGraph as default }`) and the `ForceGraphMethods` ref type
+before writing a single line against a guessed API.
+
+### Why AI opportunities render as glow sprites, not 3D star meshes
+
+A flat 3D star shape only looks like a star from specific viewing angles —
+from most angles in a freely-orbitable 3D scene, it'd look like a thin
+sliver or an odd flat plane. A `THREE.Sprite` with a canvas-generated
+radial-gradient glow texture always faces the camera regardless of orbit
+angle (billboarding), which is exactly the property real starlight has —
+you can't see a star "edge-on." This is not a simplification for
+convenience; it's the physically-correct choice for "constellation" as a
+concept, not just as a color palette. Regular nodes use plain
+`MeshBasicMaterial` spheres deliberately — unlit, so they're reliably
+visible regardless of whatever scene lighting the underlying library sets
+up by default, rather than risking invisible nodes if a lighting
+assumption turned out wrong (something that couldn't be visually
+confirmed in this environment — see below).
+
+### A real type-availability gap caught by the build, not assumed
+
+The installed `three` version (0.185.1, checked directly) ships **no**
+bundled TypeScript declarations — `tsc` failed with `TS7016` until the
+separate `@types/three` package was installed. Worth knowing: this is a
+real, current state of the `three` npm package, not a mistake in this
+setup — newer three.js releases dropped inline type declarations from
+some distribution channels, so `@types/three` from DefinitelyTyped is
+back to being necessary again, the reverse of the more common "ships its
+own types now" trend elsewhere in the ecosystem.
+
+### Both 2D and 3D views kept, not one replacing the other
+
+The 2D React Flow view (Phase 7) has real functional value the 3D view
+doesn't fully replace: precise click targets, a layout that's stable and
+readable at a glance, no orbit controls to learn. 3D is genuinely more
+impressive for a live demo and better communicates "this is a rich,
+explorable graph," but isn't strictly better for quick, precise
+navigation. Both are kept behind a toggle rather than picking one — a
+product decision, not an implementation shortcut.
+
+### Bundle size, and why it isn't a problem
+
+The 3D view's lazy-loaded chunk is ~366KB gzipped — genuinely heavy,
+because `three.js` itself is a large library and there's no way around
+that for real WebGL 3D rendering. It's lazy-loaded via `React.lazy()`
+specifically so this cost is only ever paid by someone who actually clicks
+the "3D" toggle; the default 2D experience's bundle size is unaffected.
+
+### Honest verification status, same disclosure as Phase 7
+
+`tsc -b` compiles clean, `vite build` succeeds, the chunk correctly
+appears as its own lazy-loaded bundle (confirmed by inspecting the build
+output, not assumed). **Not verified**: whether the 3D scene actually
+renders correctly, whether the glow sprites look like the intended "star"
+effect, whether orbit controls feel right, or whether performance holds
+up with a denser real graph than was used for earlier 2D testing — same
+structural limitation as Phase 7 (no browser automation tool in this
+environment), stated plainly rather than implied away.
