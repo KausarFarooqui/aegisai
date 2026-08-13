@@ -11,6 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ArrowLeft,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -144,12 +145,39 @@ export function StarMark({ className }: { className?: string }) {
   );
 }
 
+export interface BreadcrumbSegment {
+  label: string;
+  to?: string;
+}
+
+function Breadcrumbs({ segments }: { segments: BreadcrumbSegment[] }) {
+  return (
+    <nav aria-label="Breadcrumb" className="mb-2 flex items-center gap-1.5 text-xs text-slate-400">
+      {segments.map((segment, i) => (
+        <span key={i} className="flex items-center gap-1.5">
+          {i > 0 && <ChevronRight className="h-3 w-3 shrink-0" />}
+          {segment.to ? (
+            <Link to={segment.to} className="hover:text-[var(--color-navy)] hover:underline">
+              {segment.label}
+            </Link>
+          ) : (
+            <span className="text-slate-500" aria-current="page">
+              {segment.label}
+            </span>
+          )}
+        </span>
+      ))}
+    </nav>
+  );
+}
+
 export function PageHeader({
   title,
   subtitle,
   action,
   backTo,
   backLabel,
+  breadcrumbs,
 }: {
   title: string;
   subtitle?: string;
@@ -159,9 +187,15 @@ export function PageHeader({
    * button or re-clicking the sidebar. */
   backTo?: string;
   backLabel?: string;
+  /** When set, renders a "Dashboard > Processes > X" trail above
+   * everything else — coexists with backTo rather than replacing it,
+   * since they serve different purposes (breadcrumbs show the full
+   * hierarchy; the back link is one deliberate step back). */
+  breadcrumbs?: BreadcrumbSegment[];
 }) {
   return (
     <div className="border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-8 py-6">
+      {breadcrumbs && <Breadcrumbs segments={breadcrumbs} />}
       {backTo && (
         <Link
           to={backTo}

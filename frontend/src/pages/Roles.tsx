@@ -57,6 +57,11 @@ export function RoleDetailPage() {
     <>
       <PageHeader
         title={role.title}
+        breadcrumbs={[
+          { label: "Dashboard", to: "/" },
+          { label: "Roles", to: "/roles" },
+          { label: role.title },
+        ]}
         backTo="/roles"
         backLabel="Back to Roles"
         action={

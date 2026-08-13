@@ -33,6 +33,11 @@ export function ProcessDetailPage() {
     <>
       <PageHeader
         title={process.name}
+        breadcrumbs={[
+          { label: "Dashboard", to: "/" },
+          { label: "Processes", to: "/processes" },
+          { label: process.name },
+        ]}
         backTo="/processes"
         backLabel="Back to Processes"
         action={

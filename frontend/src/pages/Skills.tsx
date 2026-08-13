@@ -100,6 +100,11 @@ export function SkillDetailPage() {
     <>
       <PageHeader
         title={skill.name}
+        breadcrumbs={[
+          { label: "Dashboard", to: "/" },
+          { label: "Skills", to: "/skills" },
+          { label: skill.name },
+        ]}
         backTo="/skills"
         backLabel="Back to Skills"
         action={
