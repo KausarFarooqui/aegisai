@@ -795,3 +795,64 @@ effect, whether orbit controls feel right, or whether performance holds
 up with a denser real graph than was used for earlier 2D testing — same
 structural limitation as Phase 7 (no browser automation tool in this
 environment), stated plainly rather than implied away.
+
+---
+
+## Post-Phase-8 — real data loss against the production Supabase project, and the structural fix
+
+A bare `pytest` run in a fresh terminal used `.env`'s default
+`DATABASE_URL` — the real Supabase project — instead of the local
+override this project had relied on since Phase 3. The test suite's
+session-scoped fixture (`_create_schema` in `tests/conftest.py`) correctly
+did what it's designed to do: dropped every table when the session ended.
+Correct and safe against a disposable local test database; against the
+real project, it deleted all 20 tables' worth of real data — 12 processes
+built from real Groq calls across several sessions, their activities,
+roles, skills, AI opportunities, assessments, and evidence links. Only
+`alembic_version` survived, for the same reason documented earlier in
+this log: Alembic manages that table outside `Base.metadata`, so
+`drop_all()` never touches it.
+
+**What this was not**: a code bug, or something a test caught and missed.
+The code did exactly what it was told. **What this was**: a safety
+mechanism that depended entirely on a human remembering to type an
+environment variable override correctly, in every fresh terminal,
+indefinitely — documented in a comment, not enforced by anything. That's
+not a safety mechanism; it's a convention that will eventually fail, and
+it did, on this exact project, after seven phases of it working correctly
+by luck rather than by design.
+
+**The fix is structural, not another reminder.** `tests/conftest.py` now
+refuses to even start the test session — before any fixture runs, before
+any table is touched — unless `DATABASE_URL`'s hostname resolves to
+`localhost` or `127.0.0.1`. Verified both directions directly, not
+assumed: pointed it at a fabricated Supabase-shaped hostname and confirmed
+it refuses with a clear, actionable message before touching anything;
+then confirmed the normal local workflow is completely unaffected — all
+94 tests still pass exactly as before against the real local test
+database. This makes the exact accident that happened structurally
+impossible going forward, regardless of how many fresh terminals, how
+tired anyone is, or how long since the last time `pytest` was run — the
+protection no longer depends on memory.
+
+**Recovery**: the schema itself is pure DDL and was restored immediately
+and without incident — regenerated the exact same verified SQL used
+throughout this project (via `alembic upgrade head --sql`, not
+hand-typed, learning directly from an earlier mistake in this same log
+where hand-typing SQL introduced real errors) and applied it via the
+Supabase MCP connector. The *data* is a different matter: seed data is
+fully recoverable by re-running `scripts/seed_research_sources.py` and
+`scripts/seed_processes.py` (both idempotent, both use the exact same
+pipeline as live analysis — this is the direct payoff of that design
+choice from Phase 6, not just a nice property), at the cost of real Groq
+API calls and several minutes, same as the first time. The two processes
+created via manual `curl` testing earlier (outside the formal seed plan)
+are not automatically recovered and would need to be re-run by hand if
+wanted.
+
+This is, bluntly, the most expensive lesson of the whole project, and the
+most important one to be able to discuss honestly in the interview if
+asked "what went wrong": a destructive operation with a scope wider than
+"whatever the test needs" should never be gated by a convention a human
+has to remember correctly forever — it should be gated by code that
+checks.

@@ -2,21 +2,25 @@
 
 **MODUS Enterprise AI Build Challenge — Assignment 11: Process × Role × Skill Intelligence Graph**
 
-> Status: **Phase 8 of 12 complete — confirmed working in a real browser
-> for the first time**, via actual screenshots (dashboard, graph, roles
-> list/detail all rendering correctly with real data). That feedback
-> surfaced two genuine UX gaps (no sidebar collapse, no back navigation
-> on detail pages — both fixed) and a request for a 3D graph view, now
-> built alongside the original 2D one (toggle between them) using
-> `react-force-graph-3d` — AI opportunities render as true glowing
-> billboard sprites, not flat shapes, so they read as points of light
-> from any orbit angle. TypeScript compiles clean, production build
-> succeeds, the 3D bundle is correctly lazy-loaded (~366KB gzipped, only
-> downloaded if someone clicks into 3D mode). **Still not independently
-> verified**: whether the 3D scene actually renders and feels right —
-> that's on you to confirm, same as before. 94 backend tests passing.
-> See `frontend/README.md` and the decision log
-> for the full account.
+> Status: **Phase 8 of 12 complete, plus one serious incident and a
+> structural fix worth reading if you read nothing else here.** A bare
+> `pytest` run against the real Supabase project (instead of the local
+> test database this suite always required by convention) triggered the
+> test suite's table-drop teardown against production — wiping all real
+> seeded data. Schema was restored immediately; data is recoverable by
+> re-running the seed scripts. More importantly: `tests/conftest.py` now
+> **refuses to run at all** unless `DATABASE_URL` points at localhost —
+> verified both directions (refuses a Supabase-shaped host, doesn't
+> interfere with normal local runs). This can't happen again by accident.
+> Full account in the decision log.
+>
+> Also this phase: confirmed working in a real browser for the first
+> time via actual screenshots, which surfaced two genuine UX gaps
+> (sidebar collapse, back navigation — both fixed) and a 3D Intelligence
+> Graph view (toggle alongside the original 2D one) using
+> `react-force-graph-3d`. TypeScript compiles clean, production build
+> succeeds. 94 backend tests passing. See `frontend/README.md` and the
+> decision log for the full account.
 
 ## What this is
 
