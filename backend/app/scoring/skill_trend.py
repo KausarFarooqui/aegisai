@@ -8,24 +8,55 @@ never hand-typed during seeding — this is what makes "why is this skill
 declining" a traceable, re-runnable calculation instead of a label someone
 picked once.
 
-The classification rule (deliberately simple and explainable — this is
-exactly the kind of logic you want to be able to state in one breath
-during an interview, not something with a dozen tunable magic numbers):
+REVISED after running the real 10-process seed script (see decision log,
+"Post-Phase-6 — the skill-trend classifier couldn't reach two of its own
+six categories"): the original design required a strict MAJORITY (>50%)
+of a single responsibility type, which is the wrong statistical framing
+when there are three possible types (automate/augment/human) — a
+plurality (whichever is largest) is the correct signal of dominance, not
+an absolute majority that none may reach if opinion splits three ways.
+The original design also never implemented `INCREASING` at all, and
+`EMERGING` was scoped so narrowly (zero linked opportunities) that it
+became unreachable the moment a skill had any real usage data — against
+real seeded data, every skill ended up classified `AI_AUGMENTED` with the
+other two, more informative categories permanently silent.
 
-  - No linked AI opportunities at all           -> UNCLASSIFIED
-  - Majority AI_AUTOMATES + majority HIGH/VERY_HIGH impact -> DECLINING
-  - Majority AI_AUGMENTS                        -> AI_AUGMENTED
-  - Majority HUMAN_LED or HUMAN_APPROVAL_REQUIRED,
-    with only LOW/MEDIUM automation impact       -> ENDURING_HUMAN
-  - A skill introduced via the dynamic pipeline (source="dynamic") with no
-    opportunities yet linked, in a domain context that implies AI-adjacent
-    work (left as a hook — see EMERGING note below)  -> EMERGING
-  - Anything with a mixed/tied signal            -> CHANGING
+The revised rule, still deliberately simple and stateable in one breath:
+
+  1. No linked AI opportunities              -> UNCLASSIFIED (or EMERGING,
+     if the skill was just introduced dynamically with nothing linked yet)
+  2. Find the PLURALITY responsibility type among automate/augment/human
+     (whichever ratio is largest). If two or more are tied for largest,
+     there is no dominant signal              -> CHANGING
+  3. If automate dominates:
+       - and at least half the opportunities are HIGH/VERY_HIGH impact
+                                                -> DECLINING
+       - otherwise (automation-leaning but not yet clearly high-impact)
+                                                -> CHANGING
+  4. If augment dominates:
+       - and at least 60% are HIGH/VERY_HIGH impact (a higher bar than
+         DECLINING's 50%, since "increasing in importance" is a stronger
+         claim than mere persistence)          -> INCREASING
+       - otherwise                             -> AI_AUGMENTED
+  5. If human dominates:
+       - and fewer than half are HIGH/VERY_HIGH impact
+                                                -> ENDURING_HUMAN
+       - otherwise (human-led today, but touching a lot of high-impact
+         work — genuinely unresolved direction) -> CHANGING
 """
 from collections import Counter
 from dataclasses import dataclass
 
 from app.models import HumanAIResponsibility, ImpactBand, SkillTrend
+
+# The higher bar for INCREASING vs. DECLINING/ENDURING_HUMAN's 0.5 is
+# deliberate: claiming a skill is growing in strategic importance should
+# require stronger evidence than claiming it merely persists or is merely
+# at risk. Tune here if real seed data suggests otherwise — see decision
+# log for the reasoning if this ever needs revisiting.
+INCREASING_IMPACT_THRESHOLD = 0.6
+DECLINING_IMPACT_THRESHOLD = 0.5
+ENDURING_HUMAN_IMPACT_THRESHOLD = 0.5
 
 
 @dataclass(frozen=True)
@@ -60,39 +91,72 @@ def classify_skill_trend(
     high_impact_count = sum(1 for s in signals if s.impact_band in high_impact_bands)
     total = len(signals)
 
-    automate_ratio = responsibility_counts[HumanAIResponsibility.AI_AUTOMATES] / total
-    augment_ratio = responsibility_counts[HumanAIResponsibility.AI_AUGMENTS] / total
-    human_ratio = (
+    automate_count = responsibility_counts[HumanAIResponsibility.AI_AUTOMATES]
+    augment_count = responsibility_counts[HumanAIResponsibility.AI_AUGMENTS]
+    human_count = (
         responsibility_counts[HumanAIResponsibility.HUMAN_LED]
         + responsibility_counts[HumanAIResponsibility.HUMAN_APPROVAL_REQUIRED]
-    ) / total
+    )
     high_impact_ratio = high_impact_count / total
 
-    if automate_ratio > 0.5 and high_impact_ratio > 0.5:
+    ranked = sorted(
+        [("automate", automate_count), ("augment", augment_count), ("human", human_count)],
+        key=lambda pair: pair[1],
+        reverse=True,
+    )
+    dominant_type, dominant_count = ranked[0]
+    _, runner_up_count = ranked[1]
+
+    if dominant_count <= runner_up_count:
         return (
-            SkillTrend.DECLINING,
-            f"{responsibility_counts[HumanAIResponsibility.AI_AUTOMATES]}/{total} linked AI "
-            f"opportunities are classified AI-automates with HIGH/VERY_HIGH impact.",
+            SkillTrend.CHANGING,
+            f"No single responsibility type dominates this skill's linked AI "
+            f"opportunities ({automate_count} automate / {augment_count} augment / "
+            f"{human_count} human-led of {total} total) — signal is genuinely mixed.",
         )
 
-    if augment_ratio > 0.5:
+    if dominant_type == "automate":
+        if high_impact_ratio >= DECLINING_IMPACT_THRESHOLD:
+            return (
+                SkillTrend.DECLINING,
+                f"{automate_count}/{total} linked AI opportunities are classified "
+                f"AI-automates, and {high_impact_count}/{total} are rated HIGH/VERY_HIGH "
+                f"impact.",
+            )
+        return (
+            SkillTrend.CHANGING,
+            f"{automate_count}/{total} linked AI opportunities are classified "
+            f"AI-automates — automation-leaning, but only {high_impact_count}/{total} "
+            f"are rated high impact, so this reads as an early shift, not a "
+            f"confirmed decline yet.",
+        )
+
+    if dominant_type == "augment":
+        if high_impact_ratio >= INCREASING_IMPACT_THRESHOLD:
+            return (
+                SkillTrend.INCREASING,
+                f"{augment_count}/{total} linked AI opportunities are classified "
+                f"AI-augments, and {high_impact_count}/{total} are rated HIGH/VERY_HIGH "
+                f"impact — the skill remains essential and is increasingly central to "
+                f"high-stakes AI-assisted work.",
+            )
         return (
             SkillTrend.AI_AUGMENTED,
-            f"{responsibility_counts[HumanAIResponsibility.AI_AUGMENTS]}/{total} linked AI "
-            f"opportunities are classified AI-augments — the skill persists but its "
-            f"day-to-day application changes.",
+            f"{augment_count}/{total} linked AI opportunities are classified "
+            f"AI-augments — the skill persists but its day-to-day application changes.",
         )
 
-    if human_ratio > 0.5 and high_impact_ratio <= 0.5:
+    # dominant_type == "human"
+    if high_impact_ratio < ENDURING_HUMAN_IMPACT_THRESHOLD:
         return (
             SkillTrend.ENDURING_HUMAN,
-            f"{responsibility_counts[HumanAIResponsibility.HUMAN_LED] + responsibility_counts[HumanAIResponsibility.HUMAN_APPROVAL_REQUIRED]}/{total} "
-            f"linked AI opportunities remain human-led or require human approval, "
-            f"with only low/medium automation impact.",
+            f"{human_count}/{total} linked AI opportunities remain human-led or "
+            f"require human approval, with only {high_impact_count}/{total} rated "
+            f"high impact.",
         )
-
     return (
         SkillTrend.CHANGING,
-        f"Linked AI opportunities are mixed across automation types and impact "
-        f"levels ({dict(responsibility_counts)}) — no single trend dominates.",
+        f"{human_count}/{total} linked AI opportunities remain human-led or require "
+        f"human approval, but {high_impact_count}/{total} are rated high impact — the "
+        f"human role stays central for now, under increasing high-stakes AI pressure.",
     )

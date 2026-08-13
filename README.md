@@ -161,7 +161,7 @@ This is the actual MODUS example input ("Warehouse Inventory Forecasting")
 — nothing in the codebase is hard-coded for it specifically; any process
 name works the same way.
 
-**Phase 6 additions — 6 more tests, 82 total, all passing:**
+**Phase 6 additions — 6 tests, plus 7 more from two post-seed fixes (91 total, all passing):**
 
 - `data/seed/research_sources.py` — 20 curated, real research sources
   (industry reports, academic papers, and current regulatory guidance on
@@ -192,18 +192,32 @@ name works the same way.
   including the subtlety that a seed run reusing a dynamically-created
   entity must not overwrite that entity's original provenance).
 
-**Update — `scripts/seed_processes.py` was actually run against real
-Supabase + Groq, and it found a real bug**: 7 of 10 seed processes failed
-with `KeyError` — but only starting from the second process onward, which
-was the key clue. A role/skill reused via dedup across processes can
-legitimately accumulate skills from earlier runs that the current LLM
-response never mentions; the code was looking those up in a dict scoped
-to only the current response. Fixed by walking directly to the resolved
-ORM objects instead of round-tripping through names, and locked in with a
-regression test that's confirmed to actually catch the bug (reverted the
-fix, watched the test fail with the identical error, restored it). Full
-account in the decision log. **Not yet reconfirmed**: a full clean 10/10
-seed run with the fix applied — that's the next thing to run.
+**Update — confirmed: after the fix, the remaining 7 processes seeded
+cleanly (10/10 total, 0 failures), reusing the 3 already in the database
+from the earlier fix-verification run.** `scripts/seed_processes.py` was
+actually run against real Supabase + Groq, and it found a real bug: 7 of
+10 seed processes initially failed with `KeyError` — but only starting
+from the second process onward, which was the key clue. A role/skill
+reused via dedup across processes can legitimately accumulate skills from
+earlier runs that the current LLM response never mentions; the code was
+looking those up in a dict scoped to only the current response. Fixed by
+walking directly to the resolved ORM objects instead of round-tripping
+through names, and locked in with a regression test that's confirmed to
+actually catch the bug (reverted the fix, watched the test fail with the
+identical error, restored it).
+
+**A second real finding from the same populated dashboard**: `emerging_skills`
+and `declining_skills` both came back empty, and every one of 17 real
+skills was classified `AI_AUGMENTED`. Traced to two design gaps in the
+skill-trend classifier — `INCREASING` (one of MODUS's six specified
+categories) was never implemented at all, and the original majority-based
+dominance check (`> 0.5`) is the wrong statistical framing for a three-way
+split, which made `DECLINING` far rarer than it should be. Fixed with a
+plurality-based redesign (6 new tests, 91 total) and
+`scripts/recompute_skill_trends.py` so already-seeded skills pick up the
+new classification without another expensive round of real Groq calls.
+Full account, including the exact before/after numbers, in the decision
+log.
 
 ## Setup (verified path — WSL2/Ubuntu)
 
@@ -272,8 +286,9 @@ aegisai/
 │   │   └── workers/           # analysis_pipeline.py — the actual Surprise Record Test (P5, evidence stage added P6)
 │   ├── migrations/            # Alembic — 2 verified migrations (schema, then embedding columns)
 │   ├── scripts/                # verify_embeddings.py, test_llm_connection.py, bootstrap_minimal_data.py,
-│   │                            # seed_research_sources.py, seed_processes.py (Phase 6)
-│   └── tests/                 # pytest, 82 passing
+│   │                            # seed_research_sources.py, seed_processes.py,
+│   │                            # recompute_skill_trends.py (Phase 6)
+│   └── tests/                 # pytest, 91 passing
 ├── data/seed/                 # research_sources.py — 20 real, independently-verified sources (Phase 6)
 ├── docs/
 │   └── architecture/decision-log.md   # every architectural decision + why
@@ -294,7 +309,7 @@ aegisai/
 | Dynamic new-record analysis (Surprise Record Test) | ✅ **Working end-to-end, confirmed live** via `POST /api/processes/analyze` against real Supabase + Groq — see decision log for the full run |
 | Seed data uses the same mechanism as dynamic analysis | ✅ `scripts/seed_processes.py` calls the identical `ProcessAnalysisPipeline` as the live API — not a separate code path (Phase 6) |
 | Real frontend | ⏳ Phase 7 |
-| Tests | ✅ 82 passing |
+| Tests | ✅ 91 passing |
 | No hard-coded responses | ✅ By construction — the pipeline that handled the MODUS example ("Warehouse Inventory Forecasting") live is the exact same code path as every other input, including all 10 seed processes |
 
 Full checklist tracked in `docs/architecture/decision-log.md`.

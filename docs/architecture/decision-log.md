@@ -518,3 +518,75 @@ accumulated skills across three or more processes with partial overlap.
 It took a real 10-process run to surface — which is exactly why running
 the actual seed script, not just unit tests, was worth doing before
 calling this phase finished.
+
+---
+
+## Post-Phase-6 (continued) — the skill-trend classifier couldn't reach two of its own six categories
+
+After the dedup fix above, the real 10-process seed run completed
+successfully — 12 processes, 62 activities, 14 roles, 17 skills, 28 AI
+opportunities. But `/api/dashboard` showed **zero** emerging skills and
+**zero** declining skills, and every single one of the 17 skills was
+classified `AI_AUGMENTED`. That's not a crash, so it wasn't caught by any
+test — but it's a real weakness for a dashboard whose whole premise
+includes "which skills are declining because of automation."
+
+Tracing the actual classifier logic (`app/scoring/skill_trend.py`)
+surfaced two separate design problems, not one:
+
+**`INCREASING` was never implemented.** It's one of six categories MODUS's
+own spec lists (Emerging, Increasing, AI-Augmented, Changing, Declining,
+Enduring Human Capability), and the original `classify_skill_trend` only
+had code paths for four of them. Not a bug in the strict sense — the
+function just never wrote a branch for it — but a real, documented gap
+between what the schema (`SkillTrend` enum) promised and what the
+classifier could ever actually produce.
+
+**The original design required a strict majority (`> 0.5`) of a single
+responsibility type, which is the wrong statistical framing for a
+three-way split.** With automate/augment/human as three possible
+categories per signal, requiring any one of them to individually exceed
+50% is a much higher bar than it sounds — it's entirely possible (and, on
+real Groq output, common) for no single type to cross that threshold even
+when one is clearly the largest. The correct framing is **plurality**
+(whichever type has the most signals wins, provided it's not tied with
+another) — not majority. This one change is why `DECLINING` could reach a
+role with exactly 50% automate signals and two smaller categories filling
+the rest, a case the old `> 0.5` check would have silently missed and
+fallen through to the least informative catch-all, `CHANGING`.
+
+**The fix, verified with 6 new tests (91 total) covering every branch
+including the previously-unreachable `INCREASING`:**
+
+- Dominance is now determined by plurality among (automate count, augment
+  count, human count), with explicit tie-detection — if the top two are
+  equal, there's genuinely no dominant signal, and that correctly stays
+  `CHANGING` rather than picking one arbitrarily.
+- `INCREASING` is now reachable: augment-dominant AND ≥60% of linked
+  opportunities are HIGH/VERY_HIGH impact (a higher bar than `DECLINING`'s
+  50%, since claiming a skill is growing in strategic importance is a
+  stronger claim than claiming it merely persists).
+- Two new, more informative `CHANGING` outcomes replace what used to be
+  silent fallthrough: automate-dominant-but-not-yet-high-impact ("early
+  shift, not a confirmed decline yet") and human-dominant-but-high-impact
+  ("the human role stays central for now, under increasing high-stakes AI
+  pressure") — both are genuinely different situations from a three-way
+  tie, and now say so in the stored rationale instead of collapsing into
+  one generic "mixed signal" message.
+
+**`scripts/recompute_skill_trends.py`** exists specifically because
+changing the classification *rules* doesn't retroactively update
+`Skill.trend_classification` values already written to the database under
+the old rules — and re-running the full seed script just to pick up a
+scoring-logic change would mean 10 more real Groq calls for zero new
+data. This script is a pure recomputation over data already in the
+database (existing `AIOpportunity`/`AIAssessment` links), no LLM or
+embedding calls at all, safe to run any time the classifier's rules
+change in the future.
+
+Deliberately not "fixed" further right now: the exact thresholds (0.5 for
+`DECLINING`/`ENDURING_HUMAN`, 0.6 for `INCREASING`) are reasoned choices,
+not tuned against the real 10-process dataset's actual output — that's
+the honest next step once there's enough real data to see whether these
+specific numbers produce a sensible-looking distribution, rather than
+adjusting them now based on a single run.
