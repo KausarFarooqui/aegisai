@@ -22,6 +22,16 @@
 > succeeds. 94 backend tests passing. See `frontend/README.md` and the
 > decision log for the full account.
 
+## Submission documents
+
+Everything MODUS explicitly asks for, in one place:
+
+- [`docs/architecture/architecture-diagram.md`](docs/architecture/architecture-diagram.md) — system architecture and the Surprise Record Test pipeline, as Mermaid diagrams (render natively on GitHub)
+- [`docs/architecture/technology-inventory.md`](docs/architecture/technology-inventory.md) — every technology, real version, license, commercial-use note
+- [`docs/architecture/quality-gate-audit.md`](docs/architecture/quality-gate-audit.md) — self-audit against MODUS's exact mandatory checklist, honest about what's incomplete
+- [`docs/architecture/decision-log.md`](docs/architecture/decision-log.md) — every architectural decision and why, including real bugs found and fixed along the way
+- [`docs/demo/demo-script.md`](docs/demo/demo-script.md) — the 10–15 minute live demo, step by step
+
 ## What this is
 
 Northstar Bank is a fictional retail bank. AEGISAI models its value chain,
