@@ -339,21 +339,36 @@ class ProcessAnalysisPipeline:
             )
             opportunity.assessment = assessment
 
-            affected_roles: set[str] = set()
-            affected_skills: set[str] = set()
+            # Traverse directly to the actual Role/Skill objects rather
+            # than back through resolved_roles/resolved_skills by name —
+            # those dicts only contain entries proposed in THIS extraction
+            # response. Once a role gets dedup-matched to an existing DB
+            # row, role.skills legitimately includes skills accumulated
+            # from every earlier process that role was involved in, which
+            # would raise KeyError on the name-based lookup for any skill
+            # not also mentioned in this run. Deduping by object identity
+            # (id()) here is intentional and correct within this single
+            # method call — see decision log for the full account of how
+            # this was found (a real production run against 10 processes).
+            seen_role_ids: set[int] = set()
+            seen_skill_ids: set[int] = set()
+            affected_role_objs: list[Role] = []
+            affected_skill_objs: list[Skill] = []
             for activity_name in proposed_opp.affected_activity_names:
                 activity = activities_by_name[activity_name.strip().lower()]
                 opportunity.activities.append(activity)
                 for role in activity.roles:
-                    affected_roles.add(role.title.strip().lower())
+                    if id(role) not in seen_role_ids:
+                        seen_role_ids.add(id(role))
+                        affected_role_objs.append(role)
                     for skill in role.skills:
-                        affected_skills.add(skill.name.strip().lower())
+                        if id(skill) not in seen_skill_ids:
+                            seen_skill_ids.add(id(skill))
+                            affected_skill_objs.append(skill)
 
-            for role_key in affected_roles:
-                role, _ = resolved_roles[role_key]
+            for role in affected_role_objs:
                 opportunity.affected_roles.append(role)
-            for skill_key in affected_skills:
-                skill, _ = resolved_skills[skill_key]
+            for skill in affected_skill_objs:
                 opportunity.affected_skills.append(skill)
 
             self.db.add(opportunity)

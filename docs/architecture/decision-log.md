@@ -462,3 +462,59 @@ assumed correct, and the one real failure that surfaced was debugged and
 fixed rather than papered over. This is the same standard applied to every
 other phase of this project — a good idea sitting in a file is not the
 same thing as a verified one.
+
+---
+
+## Post-Phase-6 — a real bug found running the actual 10-process seed script
+
+**7 of 10 seed processes failed with `KeyError` on a role/skill name, and
+only after the first process or two — never on process 1.** That pattern
+was the fastest route to the diagnosis: entity dedup only starts actually
+*matching* existing rows once something exists to match against, so a bug
+specific to dedup-matched entities would naturally show up starting from
+process 2 onward, not process 1.
+
+The actual bug: when building `AIOpportunity.affected_roles` /
+`affected_skills`, the code collected the *names* of roles/skills reached
+by traversing each affected activity's roles, then looked those names back
+up in `resolved_roles` / `resolved_skills` — two dicts keyed by the names
+the LLM *proposed in this specific extraction response*. That works fine
+for a role created fresh in this run. It breaks the instant a role gets
+dedup-matched to an **existing** database row: that row's `.skills`
+collection legitimately includes skills accumulated from every earlier
+process the role appeared in, not just the ones mentioned in the current
+LLM response — so looking up "Credit Risk Assessment" (attached to
+"Credit Analyst" back in seed process 1) inside a dict that only contains
+process 4's proposed skill names raises `KeyError`, every time a reused
+role had picked up a skill in an earlier run that the current run's LLM
+response never mentions.
+
+Fixed by never round-tripping through names at all: the code now walks
+directly to the already-resolved `Role`/`Skill` ORM objects while
+traversing `activity.roles` / `role.skills`, deduplicating by Python
+object identity (`id()`) rather than by re-deriving a name-based dict key.
+This is strictly more correct — it also means an opportunity now correctly
+picks up the *full* accumulated skill set of a reused role (skills from
+every process it's touched), not just whatever the current run happened to
+propose, which is arguably the behavior the graph should have had all
+along.
+
+Reproduced as a permanent regression test
+(`test_reused_role_with_a_different_new_skill_does_not_crash`): run the
+pipeline once so a role/skill pair gets created, run it again with the
+same role but a genuinely different skill, and confirm the second run's
+AI opportunity ends up with *both* skills rather than crashing. Confirmed
+this test actually catches the bug — not just that it passes with the fix
+applied — by reverting only the fix, rerunning, and watching it fail with
+the identical `KeyError` shape seen in the real seed run
+(`KeyError: 'credit risk assessment'`), before restoring the fix and
+confirming green again.
+
+This is the single clearest example in the whole project of why the
+"smaller genuinely working system" philosophy matters over feature count:
+this bug was invisible in every two-process test run (including the two
+live curl tests earlier), because it only manifests once a role has
+accumulated skills across three or more processes with partial overlap.
+It took a real 10-process run to surface — which is exactly why running
+the actual seed script, not just unit tests, was worth doing before
+calling this phase finished.

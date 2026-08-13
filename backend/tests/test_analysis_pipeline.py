@@ -287,6 +287,48 @@ def test_second_run_with_genuinely_different_role_creates_a_new_one(db, value_ch
     assert db.query(Skill).count() == 2
 
 
+def test_reused_role_with_a_different_new_skill_does_not_crash(db, value_chain):
+    """
+    Regression test for a real bug found running the actual seed script
+    against 10 live processes (see decision log): once a role is
+    dedup-matched to an existing DB row, role.skills legitimately includes
+    skills accumulated from every earlier process it appeared in — not
+    just the ones proposed in the current LLM response. The original code
+    looked those up by name in a dict scoped to only the current
+    extraction, which raised KeyError for any skill the role had picked up
+    previously. This reproduces that exact shape: same role, second run
+    proposes a genuinely different skill for it, and the opportunity's
+    affected_activity_names pulls in that role.
+    """
+    payload_1 = _valid_extraction_payload(role_title="Credit Analyst", skill_name="Credit Risk Assessment")
+    pipeline_1, _ = _make_pipeline(db, payload_1)
+    job_1 = pipeline_1.run("Loan Underwriting", value_chain.id)
+    assert job_1.status == AnalysisJobStatus.COMPLETED
+
+    # Same role, but this run's LLM response proposes a DIFFERENT skill for
+    # it — "Credit Risk Assessment" from run 1 is never mentioned here.
+    payload_2 = _valid_extraction_payload(
+        process_purpose="Monitor ongoing loan portfolio risk exposure.",
+        role_title="Credit Analyst",
+        skill_name="Regulatory Reporting",
+    )
+    pipeline_2, _ = _make_pipeline(db, payload_2)
+    job_2 = pipeline_2.run("Loan Portfolio Monitoring", value_chain.id)
+
+    assert job_2.status == AnalysisJobStatus.COMPLETED, job_2.error_message
+    assert db.query(Role).filter(Role.title == "Credit Analyst").count() == 1
+
+    from app.models import Process
+
+    process_2 = db.get(Process, job_2.result_entity_id)
+    opportunity = process_2.activities[0].ai_opportunities[0]
+    affected_skill_names = {s.name for s in opportunity.affected_skills}
+    # Both the skill from this run AND the one accumulated from the
+    # earlier run should be present — the role's full skill set, not a
+    # crash and not a silently truncated one.
+    assert affected_skill_names == {"Regulatory Reporting", "Credit Risk Assessment"}
+
+
 # ----------------------------------------------------------------------
 # Validation and failure handling — must fail cleanly, never fabricate
 # ----------------------------------------------------------------------

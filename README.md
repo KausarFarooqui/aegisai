@@ -192,13 +192,18 @@ name works the same way.
   including the subtlety that a seed run reusing a dynamically-created
   entity must not overwrite that entity's original provenance).
 
-**Not yet live-verified**: the real evidence-retrieval quality (does a
-real embedding of a real AI opportunity actually find genuinely relevant
-research from the corpus, at a sensible threshold) and the real 10-process
-seed run's output quality — both need your real Groq key + embedding
-model, same disclosed pattern as every AI-dependent piece so far. Run
-`scripts/seed_research_sources.py` then `scripts/seed_processes.py` on
-your machine to confirm.
+**Update — `scripts/seed_processes.py` was actually run against real
+Supabase + Groq, and it found a real bug**: 7 of 10 seed processes failed
+with `KeyError` — but only starting from the second process onward, which
+was the key clue. A role/skill reused via dedup across processes can
+legitimately accumulate skills from earlier runs that the current LLM
+response never mentions; the code was looking those up in a dict scoped
+to only the current response. Fixed by walking directly to the resolved
+ORM objects instead of round-tripping through names, and locked in with a
+regression test that's confirmed to actually catch the bug (reverted the
+fix, watched the test fail with the identical error, restored it). Full
+account in the decision log. **Not yet reconfirmed**: a full clean 10/10
+seed run with the fix applied — that's the next thing to run.
 
 ## Setup (verified path — WSL2/Ubuntu)
 
